@@ -24,6 +24,16 @@ const schema = `
     reviewer_scorecard JSONB
   );
 
+  -- New table to store violation events/screenshots separately for auditing and retention
+  CREATE TABLE IF NOT EXISTS violation_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+    event_ts TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    event_type TEXT,
+    image_url TEXT,
+    metadata JSONB DEFAULT '{}'
+  );
+
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS security_events JSONB DEFAULT '[]';
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS suspicion_score INT DEFAULT 0;
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reviewer_scorecard JSONB;

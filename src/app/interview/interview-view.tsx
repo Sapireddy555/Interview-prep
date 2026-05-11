@@ -3,7 +3,7 @@
 
 import { useSearchParams } from "next/navigation";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk } from "@/app/actions";
+import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot } from "@/app/actions";
 import { ROLE_BASED_QUESTIONS, FALLBACK_QUESTIONS } from "@/lib/interview-constants";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -157,10 +157,37 @@ export function InterviewView() {
             description: res.data.warningMessage,
             variant: "destructive",
           });
+          // Capture a higher-quality screenshot and upload it for record
+          try {
+            const hiCanvas = document.createElement("canvas");
+            const maxW = Math.min(1280, videoRef.current.videoWidth || 1280);
+            const maxH = Math.min(720, videoRef.current.videoHeight || 720);
+            hiCanvas.width = maxW;
+            hiCanvas.height = maxH;
+            const hiCtx = hiCanvas.getContext("2d");
+            if (hiCtx) {
+              hiCtx.drawImage(videoRef.current, 0, 0, maxW, maxH);
+              hiCanvas.toBlob(async (blob) => {
+                if (blob && interviewId) {
+                  try {
+                    const formData = new FormData();
+                    formData.append("interviewId", interviewId);
+                    formData.append("timestamp", timestamp);
+                    formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
+                    await uploadViolationScreenshot(formData);
+                  } catch (e) {
+                    console.error("Error uploading violation screenshot:", e);
+                  }
+                }
+              }, "image/png", 0.9);
+            }
+          } catch (e) {
+            console.error("Error capturing/uploading hi-res screenshot:", e);
+          }
         }
       }
     }
-  }, [addSecurityEvent, getRelativeTimestamp, toast]);
+  }, [addSecurityEvent, getRelativeTimestamp, toast, interviewId]);
 
   useEffect(() => {
     const id = searchParams.get("interviewId");
@@ -175,26 +202,32 @@ export function InterviewView() {
         }
 
         if (id) {
-            let mediaRecorder;
-            try {
-                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
-            } catch (e) {
-                mediaRecorder = new MediaRecorder(stream);
-            }
-            mediaRecorderRef.current = mediaRecorder;
+            // prefer audio-only uploads to reduce storage; keep video stream for proctoring
+            const audioTracks = stream.getAudioTracks();
+            if (audioTracks.length > 0) {
+              const audioStream = new MediaStream(audioTracks);
+              let mediaRecorder;
+              try {
+                mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
+              } catch (e) {
+                mediaRecorder = new MediaRecorder(audioStream);
+              }
+              mediaRecorderRef.current = mediaRecorder;
 
-            mediaRecorder.ondataavailable = async (e) => {
-                if (e.data.size > 0 && id) {
-                    const formData = new FormData();
-                    formData.append("interviewId", id);
-                    formData.append("chunkIndex", chunkIndexRef.current.toString());
-                    formData.append("chunk", new File([e.data], "chunk.webm", { type: e.data.type }));
-                    chunkIndexRef.current++;
-                    
-                    uploadRecordingChunk(formData).catch(err => console.error("Upload chunk error:", err));
-                }
-            };
-            mediaRecorder.start(10000); 
+              mediaRecorder.ondataavailable = async (e) => {
+                  if (e.data.size > 0 && id) {
+                      const formData = new FormData();
+                      formData.append("interviewId", id);
+                      formData.append("chunkIndex", chunkIndexRef.current.toString());
+                      formData.append("chunk", new File([e.data], "chunk.webm", { type: e.data.type }));
+                      chunkIndexRef.current++;
+                      uploadRecordingChunk(formData).catch(err => console.error("Upload chunk error:", err));
+                  }
+              };
+              mediaRecorder.start(10000);
+            } else {
+              console.warn("No audio track available for recording");
+            }
         }
 
         proctoringIntervalRef.current = setInterval(runProctoring, 5000);

@@ -380,3 +380,66 @@ export async function uploadRecordingChunk(formData: FormData) {
       return { success: false, error: String(error) };
   }
 }
+
+export async function uploadViolationScreenshot(formData: FormData) {
+  const interviewId = formData.get("interviewId") as string;
+  const timestamp = (formData.get("timestamp") as string) || String(Date.now());
+  const imageFile = formData.get("image") as File | null;
+
+  if (!imageFile) return { success: false, error: "No image file" };
+
+  const sasUrl = process.env.AZURE_STORAGE_SAS_URL;
+  const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+  const blobName = `violation_${interviewId}_${timestamp}.png`;
+
+  if (!sasUrl && !connectionString) {
+    console.log(`[Mock Azure Violation Upload] Received violation for ${interviewId} at ${timestamp}, size: ${imageFile.size}`);
+    const mockUrl = `/mock/violations/${blobName}`;
+    try {
+      const event = [{ timestamp, type: "proctoring_violation", imageUrl: mockUrl }];
+      await db.query("UPDATE sessions SET violations = COALESCE(violations, '[]'::jsonb) || $1::jsonb WHERE id = $2", [JSON.stringify(event), interviewId]);
+    } catch (e) {
+      console.error("DB Error saving violation (mock):", e);
+    }
+    return { success: true, url: mockUrl };
+  }
+
+  try {
+    const { BlobServiceClient, ContainerClient } = await import("@azure/storage-blob");
+    let containerClient;
+
+    if (sasUrl) {
+      containerClient = new ContainerClient(sasUrl);
+    } else {
+      const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString!);
+      containerClient = blobServiceClient.getContainerClient("interview-violations");
+      await containerClient.createIfNotExists();
+    }
+
+    const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+    const buffer = Buffer.from(await imageFile.arrayBuffer());
+    await blockBlobClient.upload(buffer, buffer.length, {
+      blobHTTPHeaders: { blobContentType: imageFile.type || "image/png" },
+    });
+
+    const url = sasUrl ? `${sasUrl.replace(/\/$/, '')}/${blobName}` : `${containerClient.url}/${blobName}`;
+
+    const event = [{ timestamp, type: "proctoring_violation", imageUrl: url }];
+    await db.query("UPDATE sessions SET violations = COALESCE(violations, '[]'::jsonb) || $1::jsonb WHERE id = $2", [JSON.stringify(event), interviewId]);
+
+    try {
+      const violationId = `violation_${Date.now()}_${Math.random().toString(36).substr(2,8)}`;
+      await db.query(
+        `INSERT INTO violation_events (id, session_id, event_ts, event_type, image_url, metadata) VALUES ($1, $2, CURRENT_TIMESTAMP, $3, $4, $5)`,
+        [violationId, interviewId, 'proctoring_violation', url, JSON.stringify({ timestamp })]
+      );
+    } catch (e) {
+      console.error('Error inserting violation_events row:', e);
+    }
+
+    return { success: true, url };
+  } catch (error) {
+    console.error("Error uploading violation screenshot:", error);
+    return { success: false, error: String(error) };
+  }
+}
