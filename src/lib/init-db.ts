@@ -40,6 +40,9 @@ const schema = `
 `;
 
 const seedData = [
+import { db } from './db';
+
+const seedData = [
   {
     id: "cand-se-001",
     role: "Generative AI Engineer",
@@ -61,10 +64,14 @@ const seedData = [
 ];
 
 export async function initializeDatabase() {
-  console.log('Initializing Database Schema...');
+  console.log('Seeding database (assumes migrations have already been applied)...');
   try {
-    await db.query(schema);
-    console.log('Schema initialized successfully.');
+    const check = await db.query("SELECT to_regclass('public.candidates') as candidates_exists");
+    const exists = check.rows[0]?.candidates_exists;
+    if (!exists) {
+      console.error('Required tables not found. Run migrations (npm run migrate:up) before seeding.');
+      return { success: false, error: 'Tables not found. Run migrations.' };
+    }
 
     for (const cand of seedData) {
       await db.query(
