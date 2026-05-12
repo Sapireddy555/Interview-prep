@@ -63,13 +63,18 @@ export function InterviewView() {
 
   const [showNextButton, setShowNextButton] = useState(false);
 
+  const totalQuestionCount =
+    questionListState.length || (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length;
+
+  const formattedRemainingTime = new Date(remainingSeconds * 1000).toISOString().substr(11, 8);
+
   const onFinalResult = useCallback((text: string) => {
     const msg: Message = { id: Date.now().toString(), role: 'user', content: text };
     setMessages(prev => [...prev, msg]);
     setShowNextButton(true);
   }, []);
 
-  const { isListening, isSpeaking, isVoiceEnabled, toggleVoice, speak, startContinuous, stopContinuous } = useAzureSpeech(onFinalResult, toast);
+  const { isListening, isSpeaking, isVoiceEnabled, toggleVoice } = useAzureSpeech(onFinalResult, toast);
 
   const runProctoring = useCallback(async () => {
     if (!isMountedRef.current) return;
@@ -320,7 +325,19 @@ export function InterviewView() {
 
   const handleRecordToggle = () => {
     if (!isRecordingControlled) startControlledRecording();
-    else stopControlledRecordingAndSubmit();
+    else if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
+      controlledRecorderRef.current.stop();
+      setIsRecordingControlled(false);
+    }
+  };
+
+  const handleSubmitAnswer = async () => {
+    if (isRecordingControlled) {
+      await stopControlledRecordingAndSubmit();
+      return;
+    }
+
+    handleNextQuestion();
   };
 
   useEffect(() => {
@@ -428,165 +445,224 @@ export function InterviewView() {
   }
 
   return (
-    <div className="flex flex-col items-center h-full max-w-6xl mx-auto w-full">
+    <div className="flex h-full w-full flex-col">
       {/* hidden proctoring video to keep camera frames even during screen-share */}
       <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
-      <div className="w-full flex-grow flex bg-card/40 backdrop-blur-md p-6 rounded-3xl border shadow-xl overflow-hidden relative">
-        <div className="w-full flex flex-col gap-4">
-          <div className="flex justify-between items-center mb-2 pb-2 border-b gap-6">
-            <div className="flex-1">
-                <h1 className="text-xl font-bold text-slate-900">{settings?.role}</h1>
-                <p className="text-xs font-semibold uppercase tracking-wider text-primary">Interviewer Protocol Active</p>
-            </div>
-            <div className="flex items-center gap-4">
-               <div className="text-right mr-4">
-                  <p className="text-[10px] uppercase font-bold text-muted-foreground">Progress</p>
-                  <p className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(questionListState.length || (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length)}</p>
-               </div>
-
-               <div className="relative group">
-                  <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full animate-pulse z-10 flex items-center gap-1">
-                      <div className="w-1 h-1 bg-white rounded-full" /> LIVE PROCTOR
-                  </div>
-                  <video 
-                      ref={videoRef} 
-                      className="h-56 w-80 rounded-2xl object-cover ring-4 ring-white shadow-2xl transition-all border-2 border-slate-100" 
-                      autoPlay 
-                      muted 
-                  />
-                  { !(hasCameraPermission) && (
-                      <div className="absolute inset-0 bg-red-50 flex items-center justify-center rounded-2xl border-2 border-red-200">
-                         <VolumeX className="h-8 w-8 text-red-400" />
-                      </div>
-                  )}
-               </div>
-
-               <div className="ml-6 text-right flex flex-col items-end gap-2">
-                  <div className="flex items-center gap-3">
-                     <div className="text-sm font-mono font-bold">{new Date(remainingSeconds * 1000).toISOString().substr(11, 8)}</div>
-                     <Button size="sm" variant="destructive" onClick={() => handleInterviewCompletion(messages)}>End Interview</Button>
-                  </div>
-               </div>
-            </div>
+      <div className="flex h-full min-h-0 flex-col rounded-[2rem] border border-slate-200/80 bg-card/70 p-4 shadow-xl backdrop-blur md:p-6">
+        <div className="mb-4 flex flex-col gap-4 rounded-[1.75rem] border border-slate-200 bg-white/90 px-5 py-4 shadow-sm md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-primary">Interview Session</p>
+            <h1 className="mt-1 text-2xl font-bold text-slate-900">{settings?.role || "Interview"}</h1>
           </div>
 
-          <div className="flex gap-6 h-full">
-            <div className="flex-1">
-              <ScrollArea className="flex-grow mb-6 pr-4" ref={scrollAreaRef}>
-                <div className="space-y-6 pb-4">
-                  {messages.map((message) => (
-                    <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
-                      {message.role === 'ai' && (
-                        <Avatar className={`h-8 w-8 ring-1 ring-slate-200 ${isSpeaking && isLastMessageFromAI && message.id === messages[messages.length-1].id ? "ring-2 ring-primary scale-105" : ""}`}>
-                          <AvatarImage src={aiAvatar?.imageUrl} />
-                          <AvatarFallback>AI</AvatarFallback>
-                        </Avatar>
-                      )}
-                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                          message.role === 'ai' ? 'bg-white text-slate-800' : 'bg-slate-900 text-white'
-                      }`}>
-                        <p className="leading-relaxed">{message.content}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">Question</p>
+              <p className="font-mono font-semibold text-slate-900">
+                {currentQuestionIndex + 1} / {totalQuestionCount}
+              </p>
             </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">Timer</p>
+              <p className="font-mono font-semibold text-slate-900">{formattedRemainingTime}</p>
+            </div>
+            <Button variant="destructive" className="rounded-2xl px-5" onClick={() => handleInterviewCompletion(messages)}>
+              End Interview
+            </Button>
+          </div>
+        </div>
 
-            <div className="w-96 flex-shrink-0 flex flex-col">
-               <div className="flex-1 flex flex-col">
-                 <div className="p-4 bg-white rounded-2xl shadow-sm border mb-4">
-                    <h3 className="text-sm font-bold mb-2">Question</h3>
-                    <p className="text-sm text-slate-700">{messages[messages.length - 1]?.content}</p>
-                 </div>
+        <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
+          <aside className="min-h-0 lg:sticky lg:top-0 lg:self-start">
+            <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-950 text-white shadow-2xl">
+              <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.25em] text-white/60">Candidate View</p>
+                  <p className="text-sm text-white/80">Camera remains fixed during the interview</p>
+                </div>
+                <div className="flex items-center gap-2 rounded-full bg-red-500/15 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.18em] text-red-200">
+                  <span className="h-2 w-2 rounded-full bg-red-400 animate-pulse" />
+                  Live
+                </div>
+              </div>
 
-                 <div className="p-4 bg-white rounded-2xl border mb-4 flex flex-col gap-3">
-                      <div className="flex gap-2">
-                        <Button onClick={handleRecordToggle} disabled={!audioStream} className="flex-1">
-                          {isRecordingControlled ? 'Stop & Submit' : 'Record My Answer'}
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">* If unsure of your answer, press Submit to move on.</p>
-                   </div>
-
-                 <div className="p-3 rounded-2xl mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="text-sm font-bold">Violations</div>
-                      <div className="text-xs text-muted-foreground">{violations.length} detected</div>
+              <div className="relative aspect-[4/5] bg-slate-900">
+                <video
+                  ref={videoRef}
+                  className="h-full w-full object-cover"
+                  autoPlay
+                  muted
+                  playsInline
+                />
+                {!hasCameraPermission && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90">
+                    <div className="rounded-3xl border border-red-400/30 bg-red-500/10 px-6 py-5 text-center">
+                      <VolumeX className="mx-auto mb-3 h-8 w-8 text-red-300" />
+                      <p className="text-sm font-semibold text-red-100">Camera unavailable</p>
+                      <p className="mt-1 text-xs text-red-100/70">Enable permissions to continue proctoring.</p>
                     </div>
+                  </div>
+                )}
+
+                <div className="absolute bottom-4 left-4 right-4 rounded-[1.5rem] border border-white/10 bg-black/45 p-4 backdrop-blur">
+                  <div className="flex items-center justify-between gap-3">
                     <div>
-                      <Button size="sm" variant="ghost" onClick={() => setShowViolationsPanel(v => !v)}>
-                        {showViolationsPanel ? 'Hide' : 'Details'}
-                      </Button>
+                      <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-white/60">Recording Status</p>
+                      <p className="mt-1 text-sm font-semibold text-white">
+                        {isRecordingControlled ? "Answer recording in progress" : "Ready for next response"}
+                      </p>
                     </div>
-                 </div>
-                 {showViolationsPanel && (
-                   <div className="p-3 bg-red-50 rounded-2xl border mb-4 text-xs">
-                     {violations.length === 0 ? (
-                       <div className="text-muted-foreground">No violations detected.</div>
-                     ) : (
-                       <ul className="space-y-2">
-                         {violations.map((v, i) => (
-                           <li key={i} className="flex justify-between">
-                             <span className="text-xs">{v.timestamp}</span>
-                             <span className="text-xs font-semibold text-red-600">{v.message}</span>
-                           </li>
-                         ))}
-                       </ul>
-                     )}
-                   </div>
-                 )}
-               </div>
-            </div>
-          </div>
+                    <div className={`h-3 w-3 rounded-full ${isRecordingControlled ? "bg-red-400 animate-pulse" : "bg-emerald-400"}`} />
+                  </div>
+                </div>
+              </div>
 
-          <div className="mt-auto pt-6 border-t flex flex-col gap-4">
-            {showNextButton && !isSpeaking ? (
-                <Button 
-                    size="lg" 
-                    onClick={handleNextQuestion}
-                    className="w-full h-14 text-lg font-bold rounded-2xl shadow-lg hover:translate-y-[-2px] transition-all bg-primary hover:bg-primary/90"
-                >
-                    {currentQuestionIndex + 1 >= (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length ? "Finish Interview" : "Proceed to Next Question"}
-                    <ChevronRight className="ml-2 h-5 w-5" />
+              <div className="grid grid-cols-2 gap-3 border-t border-white/10 bg-white/5 px-5 py-4 text-sm">
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/50">Mic</p>
+                  <p className="mt-1 font-semibold text-white">{isListening ? "Active" : "Muted"}</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/50">Violations</p>
+                  <p className="mt-1 font-semibold text-white">{violations.length} detected</p>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <section className="flex min-h-0 flex-col gap-4">
+            <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary">Current Question</p>
+                  <p className="mt-3 text-lg font-semibold leading-8 text-slate-900">{messages[messages.length - 1]?.content}</p>
+                </div>
+                <Button onClick={toggleVoice} variant="outline" size="sm" className="rounded-full bg-white" disabled={isSpeaking}>
+                  {isVoiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
                 </Button>
-            ) : (
-                <div className="flex flex-col items-center">
-                    <div className={`w-full py-6 px-8 rounded-3xl border-2 border-dashed transition-all duration-700 flex flex-col items-center gap-2
-                        ${isListening ? "border-primary/40 bg-primary/[0.02] shadow-inner" : "border-slate-100 bg-slate-50/30"}
-                    `}>
-                        <div className="flex items-center gap-3">
-                            {isListening ? (
-                                <div className="flex gap-1">
-                                    {[1,2,3,4].map(i => (
-                                        <div key={i} className="w-1 bg-primary rounded-full animate-pulse" style={{ height: `${Math.random()*20 + 5}px`, animationDelay: `${i*150}ms` }} />
-                                    ))}
-                                </div>
-                            ) : <MicOff className="h-4 w-4 text-slate-300" />}
-                            <span className={`text-[10px] font-bold uppercase tracking-[0.2em] ${isListening ? "text-primary" : "text-slate-400"}`}>
-                                {isListening ? "Live Audio Stream" : "Awaiting Input"}
-                            </span>
-                        </div>
-                        <div className="h-4" />
-                    </div>
-                </div>
-            )}
-
-            <div className="flex items-center justify-between px-2">
-                <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2 px-3 py-1 bg-slate-100 rounded-full">
-                        <div className={`w-1.5 h-1.5 rounded-full ${isListening ? "bg-green-500 animate-pulse" : "bg-slate-300"}`} />
-                        <span className="text-[9px] font-black text-slate-500 uppercase">Mic {isListening ? "Active" : "Muted"}</span>
-                        </div>
-                </div>
-                
-                <div className="flex gap-2">
-                        <Button onClick={toggleVoice} variant="outline" size="sm" className="h-8 w-8 p-0 rounded-full bg-white" disabled={isSpeaking}>
-                        {isVoiceEnabled ? <Volume2 className="h-4 w-4"/> : <VolumeX className="h-4 w-4"/>}
-                    </Button>
-                </div>
+              </div>
             </div>
-          </div>
+
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="flex min-h-0 flex-col rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-primary">Interview Flow</p>
+                    <p className="text-sm text-slate-500">Questions and captured candidate responses</p>
+                  </div>
+                </div>
+
+                <ScrollArea className="min-h-0 flex-1 pr-4" ref={scrollAreaRef}>
+                  <div className="space-y-6 pb-4">
+                    {messages.map((message) => (
+                      <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
+                        {message.role === 'ai' && (
+                          <Avatar className={`h-8 w-8 ring-1 ring-slate-200 ${isSpeaking && isLastMessageFromAI && message.id === messages[messages.length - 1].id ? "ring-2 ring-primary scale-105" : ""}`}>
+                            <AvatarImage src={aiAvatar?.imageUrl} />
+                            <AvatarFallback>AI</AvatarFallback>
+                          </Avatar>
+                        )}
+                        <div
+                          className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                            message.role === 'ai' ? 'bg-slate-50 text-slate-800 border border-slate-200' : 'bg-slate-900 text-white'
+                          }`}
+                        >
+                          <p className="leading-relaxed">{message.content}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+
+              <div className="flex flex-col gap-4">
+                <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-primary">Response Controls</p>
+                  <div className="mt-4 grid gap-3">
+                    <Button onClick={handleRecordToggle} disabled={!audioStream} className="h-12 rounded-2xl">
+                      {isRecordingControlled ? "Stop Recording" : "Record Answer"}
+                    </Button>
+                    <Button onClick={handleSubmitAnswer} variant="outline" className="h-12 rounded-2xl border-slate-300">
+                      {currentQuestionIndex + 1 >= totalQuestionCount ? "Submit & Finish" : "Submit Answer"}
+                    </Button>
+                  </div>
+                  <p className="mt-3 text-xs text-muted-foreground">
+                    Use record to capture your response, then submit to move to the next question. You can also submit without recording to skip.
+                  </p>
+                </div>
+
+                <div
+                  className={`rounded-[2rem] border-2 border-dashed p-5 transition-all ${
+                    isListening ? "border-primary/40 bg-primary/[0.03]" : "border-slate-200 bg-slate-50/70"
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    {isListening ? (
+                      <div className="flex gap-1">
+                        {[1, 2, 3, 4].map((i) => (
+                          <div
+                            key={i}
+                            className="w-1 rounded-full bg-primary animate-pulse"
+                            style={{ height: `${Math.random() * 20 + 5}px`, animationDelay: `${i * 150}ms` }}
+                          />
+                        ))}
+                      </div>
+                    ) : (
+                      <MicOff className="h-4 w-4 text-slate-400" />
+                    )}
+                    <div>
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${isListening ? "text-primary" : "text-slate-500"}`}>
+                        {isListening ? "Live Audio Stream" : "Awaiting Input"}
+                      </p>
+                      <p className="mt-1 text-sm text-slate-600">
+                        {isRecordingControlled ? "Recording answer now." : "Press record when you're ready to respond."}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {showNextButton && !isSpeaking && (
+                  <Button
+                    size="lg"
+                    onClick={handleNextQuestion}
+                    className="h-12 rounded-2xl bg-primary font-bold shadow-lg hover:bg-primary/90"
+                  >
+                    {currentQuestionIndex + 1 >= totalQuestionCount ? "Finish Interview" : "Proceed to Next Question"}
+                    <ChevronRight className="ml-2 h-5 w-5" />
+                  </Button>
+                )}
+
+                <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-primary">Violation Monitor</p>
+                      <p className="text-sm text-slate-500">{violations.length} events detected</p>
+                    </div>
+                    <Button size="sm" variant="ghost" className="rounded-full" onClick={() => setShowViolationsPanel(v => !v)}>
+                      {showViolationsPanel ? "Hide" : "Details"}
+                    </Button>
+                  </div>
+
+                  {showViolationsPanel && (
+                    <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-3 text-xs">
+                      {violations.length === 0 ? (
+                        <div className="text-muted-foreground">No violations detected.</div>
+                      ) : (
+                        <ul className="space-y-2">
+                          {violations.map((v, i) => (
+                            <li key={i} className="flex justify-between gap-3">
+                              <span className="font-mono text-slate-500">{v.timestamp}</span>
+                              <span className="text-right font-semibold text-red-600">{v.message}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
       </div>
     </div>
