@@ -38,174 +38,137 @@ export function InterviewView() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const interviewStartTime = useRef<Date | null>(null);
   const proctoringIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunkIndexRef = useRef<number>(0);
   const violationsRef = useRef<{ timestamp: string; message: string }[]>([]);
   const securityEventsRef = useRef<SecurityEvent[]>([]);
   const suspicionScoreRef = useRef<number>(0);
   const isMountedRef = useRef(true);
-  const [showNextButton, setShowNextButton] = useState(false);
-  const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const proctorVideoRef = useRef<HTMLVideoElement>(null);
   const timerRef = useRef<number | null>(null);
 
-  const getRelativeTimestamp = useCallback(() => {
-    if (!interviewStartTime.current) return "00:00";
-    return new Date(Date.now() - interviewStartTime.current.getTime())
-      .toISOString()
-      .substring(14, 19);
+  const getRelativeTimestamp = () => {
+    if (!interviewStartTime.current) return new Date().toISOString();
+    const diff = Math.max(0, Date.now() - (interviewStartTime.current?.getTime() || 0));
+    const mm = Math.floor(diff / 60000).toString().padStart(2, "0");
+    const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, "0");
+    return `${mm}:${ss}`;
+  };
+
+  const addSecurityEvent = (type: SecurityEvent["type"], details?: string) => {
+    const evt: SecurityEvent = { timestamp: getRelativeTimestamp(), type, details };
+    securityEventsRef.current.push(evt);
+  };
+
+  const [showNextButton, setShowNextButton] = useState(false);
+
+  const onFinalResult = useCallback((text: string) => {
+    const msg: Message = { id: Date.now().toString(), role: 'user', content: text };
+    setMessages(prev => [...prev, msg]);
+    setShowNextButton(true);
   }, []);
 
-  function shuffleArray<T>(array: T[]) {
-    const arr = array.slice();
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
-    }
-    return arr;
-  }
-
-  const addSecurityEvent = useCallback((type: SecurityEvent["type"], details?: string) => {
-    const timestamp = getRelativeTimestamp();
-    securityEventsRef.current.push({ timestamp, type, details });
-
-    // Lightweight suspicion scoring (kept intentionally simple to avoid false positives).
-    const weights: Record<SecurityEvent["type"], number> = {
-      visibility_hidden: 10,
-      visibility_visible: 0,
-      window_blur: 6,
-      window_focus: 0,
-      copy: 4,
-      cut: 2,
-      paste: 6,
-      context_menu: 2,
-      devtools_suspected: 8,
-      proctor_looking_away: 10,
-      proctor_typing: 6,
-      proctor_phone_detected: 20,
-    };
-    suspicionScoreRef.current = Math.min(100, suspicionScoreRef.current + (weights[type] ?? 0));
-  }, [getRelativeTimestamp]);
-
-  const handleInterviewCompletion = useCallback(async (finalTranscript: Message[]) => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-    if (!interviewId || !interviewStartTime.current) return;
-  
-    const endTime = new Date();
-    const durationInMinutes = Math.round((endTime.getTime() - interviewStartTime.current.getTime()) / 60000);
-  
-    const sessionData = {
-      score: 0, 
-      duration: durationInMinutes.toString(),
-      feedback: [], 
-      transcript: finalTranscript,
-      violations: violationsRef.current,
-      securityEvents: securityEventsRef.current,
-      suspicionScore: suspicionScoreRef.current,
-    };
-  
-    const result = await saveInterviewSession(interviewId, sessionData);
-  
-    if (result.success) {
-      // Logic for background report generation and storage upload
-      generateAndSaveSummaryReport(interviewId);
-      
-      // Transition to final state immediately
-      setIsCompleted(true);
-    } else {
-      toast({
-        title: "Error",
-        description: "Could not save your interview session. Please try again.",
-        variant: "destructive",
-      });
-    }
-  }, [interviewId, toast]);
-
-  const processUserResponse = useCallback((responseText: string) => {
-    if (!responseText.trim()) return;
-
-    const userMessage: Message = { id: Date.now().toString(), role: 'user', content: responseText };
-    setMessages(prev => {
-        const newMessages = [...prev, userMessage];
-        setShowNextButton(true);
-        return newMessages;
-    });
-  }, []);
-
-  const { 
-    isListening, 
-    isSpeaking, 
-    isVoiceEnabled, 
-    toggleVoice, 
-    speak, 
-    startContinuous 
-  } = useAzureSpeech(
-    (text) => processUserResponse(text), 
-    toast
-  );
+  const { isListening, isSpeaking, isVoiceEnabled, toggleVoice, speak, startContinuous, stopContinuous } = useAzureSpeech(onFinalResult, toast);
 
   const runProctoring = useCallback(async () => {
     if (!isMountedRef.current) return;
-    if (videoRef.current && videoRef.current.readyState >= 3) {
+    const v = proctorVideoRef.current || videoRef.current;
+    if (v && v.readyState >= 3) {
       const canvas = document.createElement("canvas");
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
+      canvas.width = v.videoWidth;
+      canvas.height = v.videoHeight;
       const ctx = canvas.getContext("2d");
       if (ctx) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
         const dataUri = canvas.toDataURL("image/jpeg");
-        const res = await checkProctoring({ videoFrameDataUri: dataUri });
-        if (res.success && res.data?.hasViolation) {
-          const timestamp = getRelativeTimestamp();
-            
-          violationsRef.current.push({ timestamp, message: res.data.warningMessage });
-          const eventType =
-            res.data.violationType === "looking_away"
-              ? "proctor_looking_away"
-              : res.data.violationType === "typing"
-                ? "proctor_typing"
-                : res.data.violationType === "phone_detected"
-                  ? "proctor_phone_detected"
-                  : "visibility_visible";
-          addSecurityEvent(eventType, res.data.violationType);
-          
-          toast({
-            title: "Proctoring Warning",
-            description: res.data.warningMessage,
-            variant: "destructive",
-          });
-          // Capture a higher-quality screenshot and upload it for record
-          try {
-            const hiCanvas = document.createElement("canvas");
-            const maxW = Math.min(1280, videoRef.current.videoWidth || 1280);
-            const maxH = Math.min(720, videoRef.current.videoHeight || 720);
-            hiCanvas.width = maxW;
-            hiCanvas.height = maxH;
-            const hiCtx = hiCanvas.getContext("2d");
-            if (hiCtx) {
-              hiCtx.drawImage(videoRef.current, 0, 0, maxW, maxH);
-              hiCanvas.toBlob(async (blob) => {
-                if (blob && interviewId) {
-                  try {
-                    const formData = new FormData();
-                    formData.append("interviewId", interviewId);
-                    formData.append("timestamp", timestamp);
-                    formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
-                    await uploadViolationScreenshot(formData);
-                  } catch (e) {
-                    console.error("Error uploading violation screenshot:", e);
+        try {
+          const res = await checkProctoring({ videoFrameDataUri: dataUri });
+          if (res.success && res.data?.hasViolation) {
+            const timestamp = getRelativeTimestamp();
+            violationsRef.current.push({ timestamp, message: res.data.warningMessage });
+            const eventType =
+              res.data.violationType === "looking_away"
+                ? "proctor_looking_away"
+                : res.data.violationType === "typing"
+                  ? "proctor_typing"
+                  : res.data.violationType === "phone_detected"
+                    ? "proctor_phone_detected"
+                    : "visibility_visible";
+            addSecurityEvent(eventType, res.data.violationType);
+
+            toast({
+              title: "Proctoring Warning",
+              description: res.data.warningMessage,
+              variant: "destructive",
+            });
+
+            try {
+              const hiCanvas = document.createElement("canvas");
+              const maxW = Math.min(1280, v.videoWidth || 1280);
+              const maxH = Math.min(720, v.videoHeight || 720);
+              hiCanvas.width = maxW;
+              hiCanvas.height = maxH;
+              const hiCtx = hiCanvas.getContext("2d");
+              if (hiCtx) {
+                hiCtx.drawImage(v, 0, 0, maxW, maxH);
+                hiCanvas.toBlob(async (blob) => {
+                  if (blob && interviewId) {
+                    try {
+                      const formData = new FormData();
+                      formData.append("interviewId", interviewId);
+                      formData.append("timestamp", timestamp);
+                      formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
+                      await uploadViolationScreenshot(formData);
+                    } catch (e) {
+                      console.error("Error uploading violation screenshot:", e);
+                    }
                   }
-                }
-              }, "image/png", 0.9);
+                }, "image/png", 0.9);
+              }
+            } catch (e) {
+              console.error("Error capturing/uploading hi-res screenshot:", e);
             }
-          } catch (e) {
-            console.error("Error capturing/uploading hi-res screenshot:", e);
           }
+        } catch (err) {
+          console.error('Error in proctoring check:', err);
         }
       }
     }
   }, [addSecurityEvent, getRelativeTimestamp, toast, interviewId]);
+
+  const shuffleArray = (arr: string[]) => {
+    const copy = arr.slice();
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  };
+
+  const handleInterviewCompletion = async (msgs: Message[] = messages) => {
+    setIsCompleted(true);
+    if (!interviewId) return;
+    try {
+      const durationSeconds = interviewStartTime.current ? Math.max(0, Math.floor((Date.now() - interviewStartTime.current.getTime()) / 1000)) : 0;
+      const sessionPayload = {
+        score: 0,
+        duration: String(durationSeconds),
+        feedback: [],
+        transcript: msgs,
+        violations: violationsRef.current,
+        securityEvents: securityEventsRef.current,
+        suspicionScore: suspicionScoreRef.current || 0,
+      };
+      await saveInterviewSession(interviewId, sessionPayload as any);
+      await generateAndSaveSummaryReport(interviewId);
+      toast({ title: 'Interview saved', description: 'Session data and report saved.' });
+    } catch (err) {
+      console.error('Error completing interview', err);
+      toast({ title: 'Save failed', description: 'Could not save interview session', variant: 'destructive' });
+    }
+  };
+  
 
   useEffect(() => {
     const id = searchParams.get("interviewId");
@@ -215,7 +178,12 @@ export function InterviewView() {
         const stream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
         setHasCameraPermission(true);
 
-        if (videoRef.current) {
+        // Attach camera stream to a dedicated hidden proctor video element
+        if (proctorVideoRef.current) {
+          proctorVideoRef.current.srcObject = stream;
+        }
+        // Only set the visible video if not already set (so screen-share won't clobber the proctor stream)
+        if (videoRef.current && !videoRef.current.srcObject) {
           videoRef.current.srcObject = stream;
         }
 
@@ -620,5 +588,7 @@ export function InterviewView() {
         </div>
       </div>
     </div>
+    {/* hidden proctoring video to keep camera frames even during screen-share */}
+    <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
   );
 }
