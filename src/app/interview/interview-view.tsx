@@ -429,6 +429,8 @@ export function InterviewView() {
 
   return (
     <div className="flex flex-col items-center h-full max-w-6xl mx-auto w-full">
+      {/* hidden proctoring video to keep camera frames even during screen-share */}
+      <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
       <div className="w-full flex-grow flex bg-card/40 backdrop-blur-md p-6 rounded-3xl border shadow-xl overflow-hidden relative">
         <div className="w-full flex flex-col gap-4">
           <div className="flex justify-between items-center mb-2 pb-2 border-b gap-6">
@@ -588,7 +590,5 @@ export function InterviewView() {
         </div>
       </div>
     </div>
-    {/* hidden proctoring video to keep camera frames even during screen-share */}
-    <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
   );
 }
