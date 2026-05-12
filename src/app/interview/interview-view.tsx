@@ -24,6 +24,13 @@ export function InterviewView() {
   const [isLoading, setIsLoading] = useState(true);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
+  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
+  const [isRecordingControlled, setIsRecordingControlled] = useState(false);
+  const controlledRecorderRef = useRef<MediaRecorder | null>(null);
+  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+  const [remainingSeconds, setRemainingSeconds] = useState(60 * 60); // 60 minutes
+  const [violations, setViolations] = useState<{ timestamp: string; message: string }[]>([]);
+  const [showViolationsPanel, setShowViolationsPanel] = useState(false);
   const [interviewId, setInterviewId] = useState<string | null>(null);
   const [isCompleted, setIsCompleted] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
@@ -202,35 +209,19 @@ export function InterviewView() {
         }
 
         if (id) {
-            // prefer audio-only uploads to reduce storage; keep video stream for proctoring
-            const audioTracks = stream.getAudioTracks();
-            if (audioTracks.length > 0) {
-              const audioStream = new MediaStream(audioTracks);
-              let mediaRecorder;
-              try {
-                mediaRecorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
-              } catch (e) {
-                mediaRecorder = new MediaRecorder(audioStream);
-              }
-              mediaRecorderRef.current = mediaRecorder;
-
-              mediaRecorder.ondataavailable = async (e) => {
-                  if (e.data.size > 0 && id) {
-                      const formData = new FormData();
-                      formData.append("interviewId", id);
-                      formData.append("chunkIndex", chunkIndexRef.current.toString());
-                      formData.append("chunk", new File([e.data], "chunk.webm", { type: e.data.type }));
-                      chunkIndexRef.current++;
-                      uploadRecordingChunk(formData).catch(err => console.error("Upload chunk error:", err));
-                  }
-              };
-              mediaRecorder.start(10000);
+            // keep audio stream for controlled per-question recordings
+            const tracks = stream.getAudioTracks();
+            if (tracks.length > 0) {
+              setAudioStream(new MediaStream(tracks));
             } else {
               console.warn("No audio track available for recording");
             }
         }
 
         proctoringIntervalRef.current = setInterval(runProctoring, 5000);
+
+        // timer
+        const timer = setInterval(() => setRemainingSeconds(s => Math.max(0, s - 1)), 1000);
 
         const onVisibility = () => {
           addSecurityEvent(document.hidden ? "visibility_hidden" : "visibility_visible");
@@ -294,8 +285,71 @@ export function InterviewView() {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
             mediaRecorderRef.current.stop();
         }
+        if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
+            controlledRecorderRef.current.stop();
+        }
+        clearInterval((timer as unknown) as number);
     }
   }, [toast, runProctoring, searchParams]);
+
+  const startControlledRecording = () => {
+    if (!audioStream || !interviewId) return;
+    try {
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
+      } catch (e) {
+        recorder = new MediaRecorder(audioStream);
+      }
+      controlledRecorderRef.current = recorder;
+      setRecordedChunks([]);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) setRecordedChunks(prev => [...prev, e.data]);
+      };
+      recorder.onstop = async () => {
+        if (!interviewId) return;
+        const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('interviewId', interviewId);
+        formData.append('chunkIndex', chunkIndexRef.current.toString());
+        formData.append('chunk', new File([blob], `response_${currentQuestionIndex}.webm`, { type: blob.type }));
+        chunkIndexRef.current++;
+        try {
+          await uploadRecordingChunk(formData);
+        } catch (err) {
+          console.error('Upload error', err);
+        }
+      };
+      recorder.start();
+      setIsRecordingControlled(true);
+    } catch (err) {
+      console.error('Start recording error', err);
+    }
+  };
+
+  const stopControlledRecordingAndSubmit = async () => {
+    if (controlledRecorderRef.current && controlledRecorderRef.current.state !== 'inactive') {
+      controlledRecorderRef.current.stop();
+    }
+    setIsRecordingControlled(false);
+    // advance to next question after uploading
+    handleNextQuestion();
+  };
+
+  const handleRecordToggle = () => {
+    if (!isRecordingControlled) startControlledRecording();
+    else stopControlledRecordingAndSubmit();
+  };
+
+  useEffect(() => {
+    // sync violations from ref to state for rendering
+    const interval = setInterval(() => {
+      if (violationsRef.current.length !== violations.length) {
+        setViolations([...violationsRef.current]);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [violations.length]);
 
 
   useEffect(() => {
@@ -393,58 +447,117 @@ export function InterviewView() {
   }
 
   return (
-    <div className="flex flex-col items-center h-full max-w-4xl mx-auto w-full">
-      <div className="w-full flex-grow flex flex-col bg-card/40 backdrop-blur-md p-6 rounded-3xl border shadow-xl overflow-hidden relative">
-        <div className="flex justify-between items-center mb-6 pb-4 border-b gap-6">
+    <div className="flex flex-col items-center h-full max-w-6xl mx-auto w-full">
+      <div className="w-full flex-grow flex bg-card/40 backdrop-blur-md p-6 rounded-3xl border shadow-xl overflow-hidden relative">
+        <div className="w-full flex flex-col gap-4">
+          <div className="flex justify-between items-center mb-2 pb-2 border-b gap-6">
             <div className="flex-1">
                 <h1 className="text-xl font-bold text-slate-900">{settings?.role}</h1>
                 <p className="text-xs font-semibold uppercase tracking-wider text-primary">Interviewer Protocol Active</p>
             </div>
             <div className="flex items-center gap-4">
-                 <div className="text-right">
-                    <p className="text-[10px] uppercase font-bold text-muted-foreground">Progress</p>
-                    <p className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length}</p>
-                 </div>
-                 <div className="relative group">
-                    <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full animate-pulse z-10 flex items-center gap-1">
-                        <div className="w-1 h-1 bg-white rounded-full" /> LIVE PROCTOR
-                    </div>
-                    <video 
-                        ref={videoRef} 
-                        className="h-32 w-44 rounded-2xl object-cover ring-4 ring-white shadow-2xl transition-all border-2 border-slate-100" 
-                        autoPlay 
-                        muted 
-                    />
-                    { !(hasCameraPermission) && (
-                        <div className="absolute inset-0 bg-red-50 flex items-center justify-center rounded-2xl border-2 border-red-200">
-                           <VolumeX className="h-8 w-8 text-red-400" />
-                        </div>
-                    )}
-                 </div>
+               <div className="text-right mr-4">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground">Progress</p>
+                  <p className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length}</p>
+               </div>
+
+               <div className="relative group">
+                  <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full animate-pulse z-10 flex items-center gap-1">
+                      <div className="w-1 h-1 bg-white rounded-full" /> LIVE PROCTOR
+                  </div>
+                  <video 
+                      ref={videoRef} 
+                      className="h-56 w-80 rounded-2xl object-cover ring-4 ring-white shadow-2xl transition-all border-2 border-slate-100" 
+                      autoPlay 
+                      muted 
+                  />
+                  { !(hasCameraPermission) && (
+                      <div className="absolute inset-0 bg-red-50 flex items-center justify-center rounded-2xl border-2 border-red-200">
+                         <VolumeX className="h-8 w-8 text-red-400" />
+                      </div>
+                  )}
+               </div>
+
+               <div className="ml-6 text-right flex flex-col items-end gap-2">
+                  <div className="flex items-center gap-3">
+                     <div className="text-sm font-mono font-bold">{new Date(remainingSeconds * 1000).toISOString().substr(11, 8)}</div>
+                     <Button size="sm" variant="destructive" onClick={() => handleInterviewCompletion(messages)}>End Interview</Button>
+                  </div>
+               </div>
             </div>
-        </div>
-
-        <ScrollArea className="flex-grow mb-6 pr-4" ref={scrollAreaRef}>
-          <div className="space-y-6 pb-4">
-            {messages.map((message) => (
-              <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
-                {message.role === 'ai' && (
-                  <Avatar className={`h-8 w-8 ring-1 ring-slate-200 ${isSpeaking && isLastMessageFromAI && message.id === messages[messages.length-1].id ? "ring-2 ring-primary scale-105" : ""}`}>
-                    <AvatarImage src={aiAvatar?.imageUrl} />
-                    <AvatarFallback>AI</AvatarFallback>
-                  </Avatar>
-                )}
-                <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                    message.role === 'ai' ? 'bg-white text-slate-800' : 'bg-slate-900 text-white'
-                }`}>
-                  <p className="leading-relaxed">{message.content}</p>
-                </div>
-              </div>
-            ))}
           </div>
-        </ScrollArea>
 
-        <div className="mt-auto pt-6 border-t flex flex-col gap-4">
+          <div className="flex gap-6 h-full">
+            <div className="flex-1">
+              <ScrollArea className="flex-grow mb-6 pr-4" ref={scrollAreaRef}>
+                <div className="space-y-6 pb-4">
+                  {messages.map((message) => (
+                    <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
+                      {message.role === 'ai' && (
+                        <Avatar className={`h-8 w-8 ring-1 ring-slate-200 ${isSpeaking && isLastMessageFromAI && message.id === messages[messages.length-1].id ? "ring-2 ring-primary scale-105" : ""}`}>
+                          <AvatarImage src={aiAvatar?.imageUrl} />
+                          <AvatarFallback>AI</AvatarFallback>
+                        </Avatar>
+                      )}
+                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                          message.role === 'ai' ? 'bg-white text-slate-800' : 'bg-slate-900 text-white'
+                      }`}>
+                        <p className="leading-relaxed">{message.content}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+
+            <div className="w-96 flex-shrink-0 flex flex-col">
+               <div className="flex-1 flex flex-col">
+                 <div className="p-4 bg-white rounded-2xl shadow-sm border mb-4">
+                    <h3 className="text-sm font-bold mb-2">Question</h3>
+                    <p className="text-sm text-slate-700">{messages[messages.length - 1]?.content}</p>
+                 </div>
+
+                 <div className="p-4 bg-white rounded-2xl border mb-4 flex flex-col gap-3">
+                      <div className="flex gap-2">
+                        <Button onClick={handleRecordToggle} disabled={!audioStream} className="flex-1">
+                          {isRecordingControlled ? 'Stop & Submit' : 'Record My Answer'}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">* If unsure of your answer, press Submit to move on.</p>
+                   </div>
+
+                 <div className="p-3 rounded-2xl mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="text-sm font-bold">Violations</div>
+                      <div className="text-xs text-muted-foreground">{violations.length} detected</div>
+                    </div>
+                    <div>
+                      <Button size="sm" variant="ghost" onClick={() => setShowViolationsPanel(v => !v)}>
+                        {showViolationsPanel ? 'Hide' : 'Details'}
+                      </Button>
+                    </div>
+                 </div>
+                 {showViolationsPanel && (
+                   <div className="p-3 bg-red-50 rounded-2xl border mb-4 text-xs">
+                     {violations.length === 0 ? (
+                       <div className="text-muted-foreground">No violations detected.</div>
+                     ) : (
+                       <ul className="space-y-2">
+                         {violations.map((v, i) => (
+                           <li key={i} className="flex justify-between">
+                             <span className="text-xs">{v.timestamp}</span>
+                             <span className="text-xs font-semibold text-red-600">{v.message}</span>
+                           </li>
+                         ))}
+                       </ul>
+                     )}
+                   </div>
+                 )}
+               </div>
+            </div>
+          </div>
+
+          <div className="mt-auto pt-6 border-t flex flex-col gap-4">
             {showNextButton && !isSpeaking ? (
                 <Button 
                     size="lg" 
@@ -490,6 +603,7 @@ export function InterviewView() {
                     </Button>
                 </div>
             </div>
+          </div>
         </div>
       </div>
     </div>
