@@ -548,9 +548,7 @@ export function InterviewView() {
                 </Button>
             ) : (
                 <div className="flex flex-col items-center">
-                    <div className={`w-full py-6 px-8 rounded-3xl border-2 border-dashed transition-all duration-700 flex flex-col items-center gap-2
-                        ${isListening ? "border-primary/40 bg-primary/[0.02] shadow-inner" : "border-slate-100 bg-slate-50/30"}
-                    `}>
+                    <div className={`w-full py-6 px-8 rounded-3xl border-2 border-dashed transition-all duration-700 flex flex-col items-center gap-2 ${isListening ? "border-primary/40 bg-primary/[0.02] shadow-inner" : "border-slate-100 bg-slate-50/30"}`}>
                         <div className="flex items-center gap-3">
                             {isListening ? (
                                 <div className="flex gap-1">
