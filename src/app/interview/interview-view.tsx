@@ -368,11 +368,9 @@ export function InterviewView() {
       const firstMessage: Message = { id: Date.now().toString(), role: "ai", content: firstQuestion };
       setMessages([firstMessage]);
       
-      setTimeout(() => {
+        setTimeout(() => {
           setIsLoading(false);
-          speak(firstQuestion);
-          setTimeout(startContinuous, 3000);
-      }, 1000);
+        }, 1000);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, toast]);
@@ -398,7 +396,6 @@ export function InterviewView() {
         setMessages(prev => [...prev, aiMessage]);
         setCurrentQuestionIndex(nextIndex);
         setShowNextButton(false);
-        speak(nextQuestion);
     } else {
         handleInterviewCompletion(messages);
     }
