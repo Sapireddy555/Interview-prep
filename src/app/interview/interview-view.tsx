@@ -21,6 +21,7 @@ export function InterviewView() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<InterviewSettings | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [questionListState, setQuestionListState] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
@@ -45,6 +46,7 @@ export function InterviewView() {
   const isMountedRef = useRef(true);
   const [showNextButton, setShowNextButton] = useState(false);
   const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<number | null>(null);
 
   const getRelativeTimestamp = useCallback(() => {
     if (!interviewStartTime.current) return "00:00";
@@ -52,6 +54,15 @@ export function InterviewView() {
       .toISOString()
       .substring(14, 19);
   }, []);
+
+  function shuffleArray<T>(array: T[]) {
+    const arr = array.slice();
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
 
   const addSecurityEvent = useCallback((type: SecurityEvent["type"], details?: string) => {
     const timestamp = getRelativeTimestamp();
@@ -221,7 +232,7 @@ export function InterviewView() {
         proctoringIntervalRef.current = setInterval(runProctoring, 5000);
 
         // timer
-        const timer = setInterval(() => setRemainingSeconds(s => Math.max(0, s - 1)), 1000);
+        timerRef.current = window.setInterval(() => setRemainingSeconds(s => Math.max(0, s - 1)), 1000);
 
         const onVisibility = () => {
           addSecurityEvent(document.hidden ? "visibility_hidden" : "visibility_visible");
@@ -286,9 +297,12 @@ export function InterviewView() {
             mediaRecorderRef.current.stop();
         }
         if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
-            controlledRecorderRef.current.stop();
+          controlledRecorderRef.current.stop();
         }
-        clearInterval((timer as unknown) as number);
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
     }
   }, [toast, runProctoring, searchParams]);
 
@@ -363,14 +377,16 @@ export function InterviewView() {
       interviewStartTime.current = new Date();
       
       setIsLoading(true);
-      const questionList = ROLE_BASED_QUESTIONS[role] || FALLBACK_QUESTIONS;
-      const firstQuestion = questionList[0];
+      const baseList = ROLE_BASED_QUESTIONS[role] || FALLBACK_QUESTIONS;
+      const shuffled = shuffleArray(baseList);
+      setQuestionListState(shuffled);
+      const firstQuestion = shuffled[0] || baseList[0];
       const firstMessage: Message = { id: Date.now().toString(), role: "ai", content: firstQuestion };
       setMessages([firstMessage]);
       
-        setTimeout(() => {
+      setTimeout(() => {
           setIsLoading(false);
-        }, 1000);
+      }, 1000);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, toast]);
@@ -388,16 +404,16 @@ export function InterviewView() {
 
   const handleNextQuestion = () => {
     const nextIndex = currentQuestionIndex + 1;
-    const questionList = ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS;
-    
+    const questionList = questionListState.length ? questionListState : (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS);
+
     if (nextIndex < questionList.length) {
-        const nextQuestion = questionList[nextIndex];
-        const aiMessage: Message = { id: Date.now().toString(), role: 'ai', content: nextQuestion };
-        setMessages(prev => [...prev, aiMessage]);
-        setCurrentQuestionIndex(nextIndex);
-        setShowNextButton(false);
+      const nextQuestion = questionList[nextIndex];
+      const aiMessage: Message = { id: Date.now().toString(), role: 'ai', content: nextQuestion };
+      setMessages(prev => [...prev, aiMessage]);
+      setCurrentQuestionIndex(nextIndex);
+      setShowNextButton(false);
     } else {
-        handleInterviewCompletion(messages);
+      handleInterviewCompletion(messages);
     }
   };
 
@@ -455,7 +471,7 @@ export function InterviewView() {
             <div className="flex items-center gap-4">
                <div className="text-right mr-4">
                   <p className="text-[10px] uppercase font-bold text-muted-foreground">Progress</p>
-                  <p className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length}</p>
+                  <p className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(questionListState.length || (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length)}</p>
                </div>
 
                <div className="relative group">
