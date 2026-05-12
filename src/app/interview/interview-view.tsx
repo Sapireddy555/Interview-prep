@@ -346,9 +346,13 @@ export function InterviewView() {
       
       setIsLoading(true);
       const baseList = ROLE_BASED_QUESTIONS[role] || FALLBACK_QUESTIONS;
-      const shuffled = shuffleArray(baseList);
-      setQuestionListState(shuffled);
-      const firstQuestion = shuffled[0] || baseList[0];
+      // Keep the first two questions fixed (general intro), randomize the rest starting from index 2
+      const firstTwo = baseList.slice(0, 2);
+      const remainder = baseList.slice(2);
+      const shuffledRemainder = shuffleArray(remainder);
+      const finalList = firstTwo.concat(shuffledRemainder);
+      setQuestionListState(finalList);
+      const firstQuestion = finalList[0] || baseList[0];
       const firstMessage: Message = { id: Date.now().toString(), role: "ai", content: firstQuestion };
       setMessages([firstMessage]);
       
@@ -436,47 +440,21 @@ export function InterviewView() {
       {/* hidden proctoring video to keep camera frames even during screen-share */}
       <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
       <div className="w-full flex-grow flex bg-card/40 backdrop-blur-md p-6 rounded-3xl border shadow-xl overflow-hidden relative">
-        <div className="w-full flex flex-col gap-4">
-          <div className="flex justify-between items-center mb-2 pb-2 border-b gap-6">
-            <div className="flex-1">
-                <h1 className="text-xl font-bold text-slate-900">{settings?.role}</h1>
-                <p className="text-xs font-semibold uppercase tracking-wider text-primary">Interviewer Protocol Active</p>
+        <div className="w-full flex gap-6 h-full">
+          {/* Left: Large fixed candidate video and message timeline */}
+          <div className="flex-1 flex flex-col gap-4">
+            <div className="rounded-2xl overflow-hidden bg-black relative h-96 md:h-[520px]">
+              <div className="absolute top-4 left-4 bg-red-500 text-white text-[10px] font-bold px-2 py-1 rounded-full z-10">LIVE PROCTOR</div>
+              <video ref={videoRef} className="w-full h-full object-cover" autoPlay muted playsInline />
+              { !hasCameraPermission && (
+                <div className="absolute inset-0 bg-red-50 flex items-center justify-center">
+                  <VolumeX className="h-12 w-12 text-red-400" />
+                </div>
+              )}
             </div>
-            <div className="flex items-center gap-4">
-               <div className="text-right mr-4">
-                  <p className="text-[10px] uppercase font-bold text-muted-foreground">Progress</p>
-                  <p className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(questionListState.length || (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length)}</p>
-               </div>
 
-               <div className="relative group">
-                  <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full animate-pulse z-10 flex items-center gap-1">
-                      <div className="w-1 h-1 bg-white rounded-full" /> LIVE PROCTOR
-                  </div>
-                  <video 
-                      ref={videoRef} 
-                      className="h-56 w-80 rounded-2xl object-cover ring-4 ring-white shadow-2xl transition-all border-2 border-slate-100" 
-                      autoPlay 
-                      muted 
-                  />
-                  { !(hasCameraPermission) && (
-                      <div className="absolute inset-0 bg-red-50 flex items-center justify-center rounded-2xl border-2 border-red-200">
-                         <VolumeX className="h-8 w-8 text-red-400" />
-                      </div>
-                  )}
-               </div>
-
-               <div className="ml-6 text-right flex flex-col items-end gap-2">
-                  <div className="flex items-center gap-3">
-                     <div className="text-sm font-mono font-bold">{new Date(remainingSeconds * 1000).toISOString().substr(11, 8)}</div>
-                     <Button size="sm" variant="destructive" onClick={() => handleInterviewCompletion(messages)}>End Interview</Button>
-                  </div>
-               </div>
-            </div>
-          </div>
-
-          <div className="flex gap-6 h-full">
             <div className="flex-1">
-              <ScrollArea className="flex-grow mb-6 pr-4" ref={scrollAreaRef}>
+              <ScrollArea className="h-full mt-2" ref={scrollAreaRef}>
                 <div className="space-y-6 pb-4">
                   {messages.map((message) => (
                     <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
@@ -496,55 +474,69 @@ export function InterviewView() {
                 </div>
               </ScrollArea>
             </div>
-
-            <div className="w-96 flex-shrink-0 flex flex-col">
-               <div className="flex-1 flex flex-col">
-                 <div className="p-4 bg-white rounded-2xl shadow-sm border mb-4">
-                    <h3 className="text-sm font-bold mb-2">Question</h3>
-                    <p className="text-sm text-slate-700">{messages[messages.length - 1]?.content}</p>
-                 </div>
-
-                 <div className="p-4 bg-white rounded-2xl border mb-4 flex flex-col gap-3">
-                      <div className="flex gap-2">
-                        <Button onClick={handleRecordToggle} disabled={!audioStream} className="flex-1">
-                          {isRecordingControlled ? 'Stop & Submit' : 'Record My Answer'}
-                        </Button>
-                      </div>
-                      <p className="text-xs text-muted-foreground">* If unsure of your answer, press Submit to move on.</p>
-                   </div>
-
-                 <div className="p-3 rounded-2xl mb-4 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="text-sm font-bold">Violations</div>
-                      <div className="text-xs text-muted-foreground">{violations.length} detected</div>
-                    </div>
-                    <div>
-                      <Button size="sm" variant="ghost" onClick={() => setShowViolationsPanel(v => !v)}>
-                        {showViolationsPanel ? 'Hide' : 'Details'}
-                      </Button>
-                    </div>
-                 </div>
-                 {showViolationsPanel && (
-                   <div className="p-3 bg-red-50 rounded-2xl border mb-4 text-xs">
-                     {violations.length === 0 ? (
-                       <div className="text-muted-foreground">No violations detected.</div>
-                     ) : (
-                       <ul className="space-y-2">
-                         {violations.map((v, i) => (
-                           <li key={i} className="flex justify-between">
-                             <span className="text-xs">{v.timestamp}</span>
-                             <span className="text-xs font-semibold text-red-600">{v.message}</span>
-                           </li>
-                         ))}
-                       </ul>
-                     )}
-                   </div>
-                 )}
-               </div>
-            </div>
           </div>
 
-          <div className="mt-auto pt-6 border-t flex flex-col gap-4">
+          {/* Right: Sidebar with interview header, question, controls, violations */}
+          <aside className="w-96 flex-shrink-0 flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-lg font-semibold">{settings?.role}</h1>
+                <p className="text-xs font-semibold uppercase tracking-wider text-primary">Interviewer Protocol Active</p>
+              </div>
+              <div className="text-right">
+                <div className="text-[10px] uppercase font-bold text-muted-foreground">Progress</div>
+                <div className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(questionListState.length || (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length)}</div>
+                <div className="mt-2 flex items-center gap-2 justify-end">
+                  <div className="text-sm font-mono">{new Date(remainingSeconds * 1000).toISOString().substr(11, 8)}</div>
+                  <Button size="sm" variant="destructive" onClick={() => handleInterviewCompletion(messages)}>End Interview</Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-3 bg-white rounded-xl shadow-sm border">
+              <h3 className="text-sm font-semibold mb-1">Question</h3>
+              <p className="text-sm text-slate-700">{messages[messages.length - 1]?.content}</p>
+            </div>
+
+            <div className="p-3 bg-white rounded-xl border flex flex-col gap-3">
+              <Button onClick={handleRecordToggle} disabled={!audioStream} className="w-full">
+                {isRecordingControlled ? 'Stop & Submit' : 'Record My Answer'}
+              </Button>
+              <p className="text-xs text-muted-foreground">* If unsure of your answer, press Submit to move on.</p>
+            </div>
+
+            <div className="p-3 rounded-xl bg-white border flex items-center justify-between">
+              <div>
+                <div className="text-sm font-bold">Violations</div>
+                <div className="text-xs text-muted-foreground">{violations.length} detected</div>
+              </div>
+              <div>
+                <Button size="sm" variant="ghost" onClick={() => setShowViolationsPanel(v => !v)}>
+                  {showViolationsPanel ? 'Hide' : 'Details'}
+                </Button>
+              </div>
+            </div>
+
+            {showViolationsPanel && (
+              <div className="p-3 bg-red-50 rounded-xl border text-xs">
+                {violations.length === 0 ? (
+                  <div className="text-muted-foreground">No violations detected.</div>
+                ) : (
+                  <ul className="space-y-2">
+                    {violations.map((v, i) => (
+                      <li key={i} className="flex justify-between">
+                        <span className="text-xs">{v.timestamp}</span>
+                        <span className="text-xs font-semibold text-red-600">{v.message}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </aside>
+        </div>
+
+        <div className="mt-auto pt-6 border-t flex flex-col gap-4">
             {showNextButton && !isSpeaking ? (
                 <Button 
                     size="lg" 
