@@ -373,7 +373,7 @@ export function InterviewView() {
   }, [messages]);
 
   const aiAvatar = PlaceHolderImages.find(img => img.id === 'ai-avatar');
-  const BUILD_TAG = "a34aca7"; // temporary debug badge to confirm running build
+  const BUILD_TAG = "fcb2e8b"; // temporary debug badge to confirm running build
 
   const handleNextQuestion = () => {
     const nextIndex = currentQuestionIndex + 1;
