@@ -464,9 +464,7 @@ export function InterviewView() {
                           <AvatarFallback>AI</AvatarFallback>
                         </Avatar>
                       )}
-                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                          message.role === 'ai' ? 'bg-white text-slate-800' : 'bg-slate-900 text-white'
-                      }`}>
+                        <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${message.role === 'ai' ? 'bg-white text-slate-800' : 'bg-slate-900 text-white'}`}>
                         <p className="leading-relaxed">{message.content}</p>
                       </div>
                     </div>
