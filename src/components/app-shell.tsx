@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import organizationLogo from "@/assets/VMLogoWhite.png";
+import { PlaceHolderImages } from "@/lib/placeholder-images";
 import {
   Sidebar,
   SidebarContent,
@@ -81,7 +82,7 @@ export function AppShell({ children, hideLayout = false }: { children: React.Rea
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" className="relative h-9 w-9 rounded-full ring-2 ring-slate-100 p-0 overflow-hidden">
                 <Avatar className="h-full w-full">
-                  <AvatarImage src="/placeholder-user.jpg" alt="@user" />
+                  <AvatarImage src={PlaceHolderImages.find(i => i.id === 'user-avatar')?.imageUrl || '/placeholder-user.jpg'} alt="@user" />
                   <AvatarFallback className="bg-slate-200">U</AvatarFallback>
                 </Avatar>
               </Button>
