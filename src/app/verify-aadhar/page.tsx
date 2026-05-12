@@ -315,7 +315,7 @@ function VerifyAadharContent() {
             </CardContent>
           </Tabs>
 
-          <CardFooter className="bg-muted/10 border-t p-6 flex justify-center">
+           <CardFooter className="bg-muted/10 border-t p-6 flex justify-between items-center">
              <div className="flex items-center gap-6 opacity-60">
                 <div className="flex items-center gap-2">
                    <div className="w-2 h-2 rounded-full bg-green-500" />
@@ -329,6 +329,15 @@ function VerifyAadharContent() {
                    <div className="w-2 h-2 rounded-full bg-gray-500" />
                    <span className="text-xs font-semibold">ISO 27001</span>
                 </div>
+             </div>
+             <div className="flex items-center gap-4">
+               <Button variant="ghost" size="sm" onClick={() => {
+                 if (confirm('Skip identity verification and continue to the interview?')) {
+                   proceedToInterview();
+                 }
+               }}>
+                 Skip Verification
+               </Button>
              </div>
           </CardFooter>
         </Card>

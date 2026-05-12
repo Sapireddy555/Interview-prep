@@ -24,10 +24,23 @@ const schema = `
     reviewer_scorecard JSONB
   );
 
+  -- New table to store violation events/screenshots separately for auditing and retention
+  CREATE TABLE IF NOT EXISTS violation_events (
+    id TEXT PRIMARY KEY,
+    session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+    event_ts TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    event_type TEXT,
+    image_url TEXT,
+    metadata JSONB DEFAULT '{}'
+  );
+
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS security_events JSONB DEFAULT '[]';
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS suspicion_score INT DEFAULT 0;
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reviewer_scorecard JSONB;
 `;
+
+const seedData = [
+import { db } from './db';
 
 const seedData = [
   {
@@ -51,10 +64,14 @@ const seedData = [
 ];
 
 export async function initializeDatabase() {
-  console.log('Initializing Database Schema...');
+  console.log('Seeding database (assumes migrations have already been applied)...');
   try {
-    await db.query(schema);
-    console.log('Schema initialized successfully.');
+    const check = await db.query("SELECT to_regclass('public.candidates') as candidates_exists");
+    const exists = check.rows[0]?.candidates_exists;
+    if (!exists) {
+      console.error('Required tables not found. Run migrations (npm run migrate:up) before seeding.');
+      return { success: false, error: 'Tables not found. Run migrations.' };
+    }
 
     for (const cand of seedData) {
       await db.query(

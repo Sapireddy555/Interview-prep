@@ -3,7 +3,7 @@
 
 import { useSearchParams } from "next/navigation";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk } from "@/app/actions";
+import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot } from "@/app/actions";
 import { ROLE_BASED_QUESTIONS, FALLBACK_QUESTIONS } from "@/lib/interview-constants";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,146 +21,154 @@ export function InterviewView() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<InterviewSettings | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [questionListState, setQuestionListState] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
+  const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
+  const [isRecordingControlled, setIsRecordingControlled] = useState(false);
+  const controlledRecorderRef = useRef<MediaRecorder | null>(null);
+  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
+  const [remainingSeconds, setRemainingSeconds] = useState(60 * 60); // 60 minutes
+  const [violations, setViolations] = useState<{ timestamp: string; message: string }[]>([]);
+  const [showViolationsPanel, setShowViolationsPanel] = useState(false);
   const [interviewId, setInterviewId] = useState<string | null>(null);
   const [isCompleted, setIsCompleted] = useState(false);
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const interviewStartTime = useRef<Date | null>(null);
   const proctoringIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunkIndexRef = useRef<number>(0);
   const violationsRef = useRef<{ timestamp: string; message: string }[]>([]);
   const securityEventsRef = useRef<SecurityEvent[]>([]);
   const suspicionScoreRef = useRef<number>(0);
   const isMountedRef = useRef(true);
+  const proctorVideoRef = useRef<HTMLVideoElement>(null);
+  const timerRef = useRef<number | null>(null);
+
+  const getRelativeTimestamp = () => {
+    if (!interviewStartTime.current) return new Date().toISOString();
+    const diff = Math.max(0, Date.now() - (interviewStartTime.current?.getTime() || 0));
+    const mm = Math.floor(diff / 60000).toString().padStart(2, "0");
+    const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, "0");
+    return `${mm}:${ss}`;
+  };
+
+  const addSecurityEvent = (type: SecurityEvent["type"], details?: string) => {
+    const evt: SecurityEvent = { timestamp: getRelativeTimestamp(), type, details };
+    securityEventsRef.current.push(evt);
+  };
+
   const [showNextButton, setShowNextButton] = useState(false);
-  const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  const getRelativeTimestamp = useCallback(() => {
-    if (!interviewStartTime.current) return "00:00";
-    return new Date(Date.now() - interviewStartTime.current.getTime())
-      .toISOString()
-      .substring(14, 19);
+  const onFinalResult = useCallback((text: string) => {
+    const msg: Message = { id: Date.now().toString(), role: 'user', content: text };
+    setMessages(prev => [...prev, msg]);
+    setShowNextButton(true);
   }, []);
 
-  const addSecurityEvent = useCallback((type: SecurityEvent["type"], details?: string) => {
-    const timestamp = getRelativeTimestamp();
-    securityEventsRef.current.push({ timestamp, type, details });
-
-    // Lightweight suspicion scoring (kept intentionally simple to avoid false positives).
-    const weights: Record<SecurityEvent["type"], number> = {
-      visibility_hidden: 10,
-      visibility_visible: 0,
-      window_blur: 6,
-      window_focus: 0,
-      copy: 4,
-      cut: 2,
-      paste: 6,
-      context_menu: 2,
-      devtools_suspected: 8,
-      proctor_looking_away: 10,
-      proctor_typing: 6,
-      proctor_phone_detected: 20,
-    };
-    suspicionScoreRef.current = Math.min(100, suspicionScoreRef.current + (weights[type] ?? 0));
-  }, [getRelativeTimestamp]);
-
-  const handleInterviewCompletion = useCallback(async (finalTranscript: Message[]) => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-      mediaRecorderRef.current.stop();
-    }
-    if (!interviewId || !interviewStartTime.current) return;
-  
-    const endTime = new Date();
-    const durationInMinutes = Math.round((endTime.getTime() - interviewStartTime.current.getTime()) / 60000);
-  
-    const sessionData = {
-      score: 0, 
-      duration: durationInMinutes.toString(),
-      feedback: [], 
-      transcript: finalTranscript,
-      violations: violationsRef.current,
-      securityEvents: securityEventsRef.current,
-      suspicionScore: suspicionScoreRef.current,
-    };
-  
-    const result = await saveInterviewSession(interviewId, sessionData);
-  
-    if (result.success) {
-      // Logic for background report generation and storage upload
-      generateAndSaveSummaryReport(interviewId);
-      
-      // Transition to final state immediately
-      setIsCompleted(true);
-    } else {
-      toast({
-        title: "Error",
-        description: "Could not save your interview session. Please try again.",
-        variant: "destructive",
-      });
-    }
-  }, [interviewId, toast]);
-
-  const processUserResponse = useCallback((responseText: string) => {
-    if (!responseText.trim()) return;
-
-    const userMessage: Message = { id: Date.now().toString(), role: 'user', content: responseText };
-    setMessages(prev => {
-        const newMessages = [...prev, userMessage];
-        setShowNextButton(true);
-        return newMessages;
-    });
-  }, []);
-
-  const { 
-    isListening, 
-    isSpeaking, 
-    isVoiceEnabled, 
-    toggleVoice, 
-    speak, 
-    startContinuous 
-  } = useAzureSpeech(
-    (text) => processUserResponse(text), 
-    toast
-  );
+  const { isListening, isSpeaking, isVoiceEnabled, toggleVoice, speak, startContinuous, stopContinuous } = useAzureSpeech(onFinalResult, toast);
 
   const runProctoring = useCallback(async () => {
     if (!isMountedRef.current) return;
-    if (videoRef.current && videoRef.current.readyState >= 3) {
+    const v = proctorVideoRef.current || videoRef.current;
+    if (v && v.readyState >= 3) {
       const canvas = document.createElement("canvas");
-      canvas.width = videoRef.current.videoWidth;
-      canvas.height = videoRef.current.videoHeight;
+      canvas.width = v.videoWidth;
+      canvas.height = v.videoHeight;
       const ctx = canvas.getContext("2d");
       if (ctx) {
-        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
         const dataUri = canvas.toDataURL("image/jpeg");
-        const res = await checkProctoring({ videoFrameDataUri: dataUri });
-        if (res.success && res.data?.hasViolation) {
-          const timestamp = getRelativeTimestamp();
-            
-          violationsRef.current.push({ timestamp, message: res.data.warningMessage });
-          const eventType =
-            res.data.violationType === "looking_away"
-              ? "proctor_looking_away"
-              : res.data.violationType === "typing"
-                ? "proctor_typing"
-                : res.data.violationType === "phone_detected"
-                  ? "proctor_phone_detected"
-                  : "visibility_visible";
-          addSecurityEvent(eventType, res.data.violationType);
-          
-          toast({
-            title: "Proctoring Warning",
-            description: res.data.warningMessage,
-            variant: "destructive",
-          });
+        try {
+          const res = await checkProctoring({ videoFrameDataUri: dataUri });
+          if (res.success && res.data?.hasViolation) {
+            const timestamp = getRelativeTimestamp();
+            violationsRef.current.push({ timestamp, message: res.data.warningMessage });
+            const eventType =
+              res.data.violationType === "looking_away"
+                ? "proctor_looking_away"
+                : res.data.violationType === "typing"
+                  ? "proctor_typing"
+                  : res.data.violationType === "phone_detected"
+                    ? "proctor_phone_detected"
+                    : "visibility_visible";
+            addSecurityEvent(eventType, res.data.violationType);
+
+            toast({
+              title: "Proctoring Warning",
+              description: res.data.warningMessage,
+              variant: "destructive",
+            });
+
+            try {
+              const hiCanvas = document.createElement("canvas");
+              const maxW = Math.min(1280, v.videoWidth || 1280);
+              const maxH = Math.min(720, v.videoHeight || 720);
+              hiCanvas.width = maxW;
+              hiCanvas.height = maxH;
+              const hiCtx = hiCanvas.getContext("2d");
+              if (hiCtx) {
+                hiCtx.drawImage(v, 0, 0, maxW, maxH);
+                hiCanvas.toBlob(async (blob) => {
+                  if (blob && interviewId) {
+                    try {
+                      const formData = new FormData();
+                      formData.append("interviewId", interviewId);
+                      formData.append("timestamp", timestamp);
+                      formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
+                      await uploadViolationScreenshot(formData);
+                    } catch (e) {
+                      console.error("Error uploading violation screenshot:", e);
+                    }
+                  }
+                }, "image/png", 0.9);
+              }
+            } catch (e) {
+              console.error("Error capturing/uploading hi-res screenshot:", e);
+            }
+          }
+        } catch (err) {
+          console.error('Error in proctoring check:', err);
         }
       }
     }
-  }, [addSecurityEvent, getRelativeTimestamp, toast]);
+  }, [addSecurityEvent, getRelativeTimestamp, toast, interviewId]);
+
+  const shuffleArray = (arr: string[]) => {
+    const copy = arr.slice();
+    for (let i = copy.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  };
+
+  const handleInterviewCompletion = async (msgs: Message[] = messages) => {
+    setIsCompleted(true);
+    if (!interviewId) return;
+    try {
+      const durationSeconds = interviewStartTime.current ? Math.max(0, Math.floor((Date.now() - interviewStartTime.current.getTime()) / 1000)) : 0;
+      const sessionPayload = {
+        score: 0,
+        duration: String(durationSeconds),
+        feedback: [],
+        transcript: msgs,
+        violations: violationsRef.current,
+        securityEvents: securityEventsRef.current,
+        suspicionScore: suspicionScoreRef.current || 0,
+      };
+      await saveInterviewSession(interviewId, sessionPayload as any);
+      await generateAndSaveSummaryReport(interviewId);
+      toast({ title: 'Interview saved', description: 'Session data and report saved.' });
+    } catch (err) {
+      console.error('Error completing interview', err);
+      toast({ title: 'Save failed', description: 'Could not save interview session', variant: 'destructive' });
+    }
+  };
+  
 
   useEffect(() => {
     const id = searchParams.get("interviewId");
@@ -170,34 +178,29 @@ export function InterviewView() {
         const stream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
         setHasCameraPermission(true);
 
-        if (videoRef.current) {
+        // Attach camera stream to a dedicated hidden proctor video element
+        if (proctorVideoRef.current) {
+          proctorVideoRef.current.srcObject = stream;
+        }
+        // Only set the visible video if not already set (so screen-share won't clobber the proctor stream)
+        if (videoRef.current && !videoRef.current.srcObject) {
           videoRef.current.srcObject = stream;
         }
 
         if (id) {
-            let mediaRecorder;
-            try {
-                mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm; codecs=vp9' });
-            } catch (e) {
-                mediaRecorder = new MediaRecorder(stream);
+            // keep audio stream for controlled per-question recordings
+            const tracks = stream.getAudioTracks();
+            if (tracks.length > 0) {
+              setAudioStream(new MediaStream(tracks));
+            } else {
+              console.warn("No audio track available for recording");
             }
-            mediaRecorderRef.current = mediaRecorder;
-
-            mediaRecorder.ondataavailable = async (e) => {
-                if (e.data.size > 0 && id) {
-                    const formData = new FormData();
-                    formData.append("interviewId", id);
-                    formData.append("chunkIndex", chunkIndexRef.current.toString());
-                    formData.append("chunk", new File([e.data], "chunk.webm", { type: e.data.type }));
-                    chunkIndexRef.current++;
-                    
-                    uploadRecordingChunk(formData).catch(err => console.error("Upload chunk error:", err));
-                }
-            };
-            mediaRecorder.start(10000); 
         }
 
         proctoringIntervalRef.current = setInterval(runProctoring, 5000);
+
+        // timer
+        timerRef.current = window.setInterval(() => setRemainingSeconds(s => Math.max(0, s - 1)), 1000);
 
         const onVisibility = () => {
           addSecurityEvent(document.hidden ? "visibility_hidden" : "visibility_visible");
@@ -261,8 +264,74 @@ export function InterviewView() {
         if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
             mediaRecorderRef.current.stop();
         }
+        if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
+          controlledRecorderRef.current.stop();
+        }
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
     }
   }, [toast, runProctoring, searchParams]);
+
+  const startControlledRecording = () => {
+    if (!audioStream || !interviewId) return;
+    try {
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
+      } catch (e) {
+        recorder = new MediaRecorder(audioStream);
+      }
+      controlledRecorderRef.current = recorder;
+      setRecordedChunks([]);
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) setRecordedChunks(prev => [...prev, e.data]);
+      };
+      recorder.onstop = async () => {
+        if (!interviewId) return;
+        const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('interviewId', interviewId);
+        formData.append('chunkIndex', chunkIndexRef.current.toString());
+        formData.append('chunk', new File([blob], `response_${currentQuestionIndex}.webm`, { type: blob.type }));
+        chunkIndexRef.current++;
+        try {
+          await uploadRecordingChunk(formData);
+        } catch (err) {
+          console.error('Upload error', err);
+        }
+      };
+      recorder.start();
+      setIsRecordingControlled(true);
+    } catch (err) {
+      console.error('Start recording error', err);
+    }
+  };
+
+  const stopControlledRecordingAndSubmit = async () => {
+    if (controlledRecorderRef.current && controlledRecorderRef.current.state !== 'inactive') {
+      controlledRecorderRef.current.stop();
+    }
+    setIsRecordingControlled(false);
+    // advance to next question after uploading
+    handleNextQuestion();
+  };
+
+  const handleRecordToggle = () => {
+    if (!isRecordingControlled) startControlledRecording();
+    else stopControlledRecordingAndSubmit();
+  };
+
+  useEffect(() => {
+    // sync violations from ref to state for rendering
+    const interval = setInterval(() => {
+      if (violationsRef.current.length !== violations.length) {
+        setViolations([...violationsRef.current]);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [violations.length]);
 
 
   useEffect(() => {
@@ -276,15 +345,15 @@ export function InterviewView() {
       interviewStartTime.current = new Date();
       
       setIsLoading(true);
-      const questionList = ROLE_BASED_QUESTIONS[role] || FALLBACK_QUESTIONS;
-      const firstQuestion = questionList[0];
+      const baseList = ROLE_BASED_QUESTIONS[role] || FALLBACK_QUESTIONS;
+      const shuffled = shuffleArray(baseList);
+      setQuestionListState(shuffled);
+      const firstQuestion = shuffled[0] || baseList[0];
       const firstMessage: Message = { id: Date.now().toString(), role: "ai", content: firstQuestion };
       setMessages([firstMessage]);
       
       setTimeout(() => {
           setIsLoading(false);
-          speak(firstQuestion);
-          setTimeout(startContinuous, 3000);
       }, 1000);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -303,17 +372,16 @@ export function InterviewView() {
 
   const handleNextQuestion = () => {
     const nextIndex = currentQuestionIndex + 1;
-    const questionList = ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS;
-    
+    const questionList = questionListState.length ? questionListState : (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS);
+
     if (nextIndex < questionList.length) {
-        const nextQuestion = questionList[nextIndex];
-        const aiMessage: Message = { id: Date.now().toString(), role: 'ai', content: nextQuestion };
-        setMessages(prev => [...prev, aiMessage]);
-        setCurrentQuestionIndex(nextIndex);
-        setShowNextButton(false);
-        speak(nextQuestion);
+      const nextQuestion = questionList[nextIndex];
+      const aiMessage: Message = { id: Date.now().toString(), role: 'ai', content: nextQuestion };
+      setMessages(prev => [...prev, aiMessage]);
+      setCurrentQuestionIndex(nextIndex);
+      setShowNextButton(false);
     } else {
-        handleInterviewCompletion(messages);
+      handleInterviewCompletion(messages);
     }
   };
 
@@ -360,58 +428,119 @@ export function InterviewView() {
   }
 
   return (
-    <div className="flex flex-col items-center h-full max-w-4xl mx-auto w-full">
-      <div className="w-full flex-grow flex flex-col bg-card/40 backdrop-blur-md p-6 rounded-3xl border shadow-xl overflow-hidden relative">
-        <div className="flex justify-between items-center mb-6 pb-4 border-b gap-6">
+    <div className="flex flex-col items-center h-full max-w-6xl mx-auto w-full">
+      {/* hidden proctoring video to keep camera frames even during screen-share */}
+      <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
+      <div className="w-full flex-grow flex bg-card/40 backdrop-blur-md p-6 rounded-3xl border shadow-xl overflow-hidden relative">
+        <div className="w-full flex flex-col gap-4">
+          <div className="flex justify-between items-center mb-2 pb-2 border-b gap-6">
             <div className="flex-1">
                 <h1 className="text-xl font-bold text-slate-900">{settings?.role}</h1>
                 <p className="text-xs font-semibold uppercase tracking-wider text-primary">Interviewer Protocol Active</p>
             </div>
             <div className="flex items-center gap-4">
-                 <div className="text-right">
-                    <p className="text-[10px] uppercase font-bold text-muted-foreground">Progress</p>
-                    <p className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length}</p>
-                 </div>
-                 <div className="relative group">
-                    <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full animate-pulse z-10 flex items-center gap-1">
-                        <div className="w-1 h-1 bg-white rounded-full" /> LIVE PROCTOR
-                    </div>
-                    <video 
-                        ref={videoRef} 
-                        className="h-32 w-44 rounded-2xl object-cover ring-4 ring-white shadow-2xl transition-all border-2 border-slate-100" 
-                        autoPlay 
-                        muted 
-                    />
-                    { !(hasCameraPermission) && (
-                        <div className="absolute inset-0 bg-red-50 flex items-center justify-center rounded-2xl border-2 border-red-200">
-                           <VolumeX className="h-8 w-8 text-red-400" />
-                        </div>
-                    )}
-                 </div>
+               <div className="text-right mr-4">
+                  <p className="text-[10px] uppercase font-bold text-muted-foreground">Progress</p>
+                  <p className="text-sm font-mono font-bold">{currentQuestionIndex + 1} / {(questionListState.length || (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length)}</p>
+               </div>
+
+               <div className="relative group">
+                  <div className="absolute -top-2 -right-2 bg-red-500 text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full animate-pulse z-10 flex items-center gap-1">
+                      <div className="w-1 h-1 bg-white rounded-full" /> LIVE PROCTOR
+                  </div>
+                  <video 
+                      ref={videoRef} 
+                      className="h-56 w-80 rounded-2xl object-cover ring-4 ring-white shadow-2xl transition-all border-2 border-slate-100" 
+                      autoPlay 
+                      muted 
+                  />
+                  { !(hasCameraPermission) && (
+                      <div className="absolute inset-0 bg-red-50 flex items-center justify-center rounded-2xl border-2 border-red-200">
+                         <VolumeX className="h-8 w-8 text-red-400" />
+                      </div>
+                  )}
+               </div>
+
+               <div className="ml-6 text-right flex flex-col items-end gap-2">
+                  <div className="flex items-center gap-3">
+                     <div className="text-sm font-mono font-bold">{new Date(remainingSeconds * 1000).toISOString().substr(11, 8)}</div>
+                     <Button size="sm" variant="destructive" onClick={() => handleInterviewCompletion(messages)}>End Interview</Button>
+                  </div>
+               </div>
             </div>
-        </div>
-
-        <ScrollArea className="flex-grow mb-6 pr-4" ref={scrollAreaRef}>
-          <div className="space-y-6 pb-4">
-            {messages.map((message) => (
-              <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
-                {message.role === 'ai' && (
-                  <Avatar className={`h-8 w-8 ring-1 ring-slate-200 ${isSpeaking && isLastMessageFromAI && message.id === messages[messages.length-1].id ? "ring-2 ring-primary scale-105" : ""}`}>
-                    <AvatarImage src={aiAvatar?.imageUrl} />
-                    <AvatarFallback>AI</AvatarFallback>
-                  </Avatar>
-                )}
-                <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
-                    message.role === 'ai' ? 'bg-white text-slate-800' : 'bg-slate-900 text-white'
-                }`}>
-                  <p className="leading-relaxed">{message.content}</p>
-                </div>
-              </div>
-            ))}
           </div>
-        </ScrollArea>
 
-        <div className="mt-auto pt-6 border-t flex flex-col gap-4">
+          <div className="flex gap-6 h-full">
+            <div className="flex-1">
+              <ScrollArea className="flex-grow mb-6 pr-4" ref={scrollAreaRef}>
+                <div className="space-y-6 pb-4">
+                  {messages.map((message) => (
+                    <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
+                      {message.role === 'ai' && (
+                        <Avatar className={`h-8 w-8 ring-1 ring-slate-200 ${isSpeaking && isLastMessageFromAI && message.id === messages[messages.length-1].id ? "ring-2 ring-primary scale-105" : ""}`}>
+                          <AvatarImage src={aiAvatar?.imageUrl} />
+                          <AvatarFallback>AI</AvatarFallback>
+                        </Avatar>
+                      )}
+                      <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                          message.role === 'ai' ? 'bg-white text-slate-800' : 'bg-slate-900 text-white'
+                      }`}>
+                        <p className="leading-relaxed">{message.content}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </div>
+
+            <div className="w-96 flex-shrink-0 flex flex-col">
+               <div className="flex-1 flex flex-col">
+                 <div className="p-4 bg-white rounded-2xl shadow-sm border mb-4">
+                    <h3 className="text-sm font-bold mb-2">Question</h3>
+                    <p className="text-sm text-slate-700">{messages[messages.length - 1]?.content}</p>
+                 </div>
+
+                 <div className="p-4 bg-white rounded-2xl border mb-4 flex flex-col gap-3">
+                      <div className="flex gap-2">
+                        <Button onClick={handleRecordToggle} disabled={!audioStream} className="flex-1">
+                          {isRecordingControlled ? 'Stop & Submit' : 'Record My Answer'}
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">* If unsure of your answer, press Submit to move on.</p>
+                   </div>
+
+                 <div className="p-3 rounded-2xl mb-4 flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="text-sm font-bold">Violations</div>
+                      <div className="text-xs text-muted-foreground">{violations.length} detected</div>
+                    </div>
+                    <div>
+                      <Button size="sm" variant="ghost" onClick={() => setShowViolationsPanel(v => !v)}>
+                        {showViolationsPanel ? 'Hide' : 'Details'}
+                      </Button>
+                    </div>
+                 </div>
+                 {showViolationsPanel && (
+                   <div className="p-3 bg-red-50 rounded-2xl border mb-4 text-xs">
+                     {violations.length === 0 ? (
+                       <div className="text-muted-foreground">No violations detected.</div>
+                     ) : (
+                       <ul className="space-y-2">
+                         {violations.map((v, i) => (
+                           <li key={i} className="flex justify-between">
+                             <span className="text-xs">{v.timestamp}</span>
+                             <span className="text-xs font-semibold text-red-600">{v.message}</span>
+                           </li>
+                         ))}
+                       </ul>
+                     )}
+                   </div>
+                 )}
+               </div>
+            </div>
+          </div>
+
+          <div className="mt-auto pt-6 border-t flex flex-col gap-4">
             {showNextButton && !isSpeaking ? (
                 <Button 
                     size="lg" 
@@ -457,6 +586,7 @@ export function InterviewView() {
                     </Button>
                 </div>
             </div>
+          </div>
         </div>
       </div>
     </div>
