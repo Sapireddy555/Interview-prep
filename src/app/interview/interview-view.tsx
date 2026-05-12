@@ -369,6 +369,7 @@ export function InterviewView() {
   }, [messages]);
 
   const aiAvatar = PlaceHolderImages.find(img => img.id === 'ai-avatar');
+  const BUILD_TAG = "a34aca7"; // temporary debug badge to confirm running build
 
   const handleNextQuestion = () => {
     const nextIndex = currentQuestionIndex + 1;
@@ -429,6 +430,9 @@ export function InterviewView() {
 
   return (
     <div className="flex flex-col items-center h-full max-w-6xl mx-auto w-full">
+      <div className="fixed left-4 bottom-4 z-50">
+        <div className="text-[10px] font-mono bg-slate-800 text-white px-2 py-1 rounded-md shadow">BUILD {BUILD_TAG}</div>
+      </div>
       {/* hidden proctoring video to keep camera frames even during screen-share */}
       <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
       <div className="w-full flex-grow flex bg-card/40 backdrop-blur-md p-6 rounded-3xl border shadow-xl overflow-hidden relative">
