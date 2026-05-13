@@ -66,7 +66,9 @@ export function InterviewView() {
   const totalQuestionCount =
     questionListState.length || (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length;
 
-  const formattedRemainingTime = new Date(remainingSeconds * 1000).toISOString().substr(11, 8);
+  const formattedRemainingTime = `${Math.floor(remainingSeconds / 60)
+    .toString()
+    .padStart(2, "0")}:${(remainingSeconds % 60).toString().padStart(2, "0")}`;
 
   const onFinalResult = useCallback((text: string) => {
     const msg: Message = { id: Date.now().toString(), role: 'user', content: text };
@@ -468,7 +470,7 @@ export function InterviewView() {
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm">
               <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground">Timer</p>
-              <p className="font-mono font-semibold text-slate-900">{formattedRemainingTime}</p>
+              <p className="font-mono text-base font-semibold text-slate-900">{formattedRemainingTime}</p>
             </div>
             <Button variant="destructive" className="rounded-2xl px-5" onClick={() => handleInterviewCompletion(messages)}>
               End Interview
@@ -534,12 +536,12 @@ export function InterviewView() {
             </div>
           </aside>
 
-          <section className="flex min-h-0 flex-col gap-4">
-            <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <section className="flex min-h-0 flex-col gap-3">
+            <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary">Current Question</p>
-                  <p className="mt-3 text-base font-semibold leading-7 text-slate-900 md:text-[1.05rem]">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Current Question</p>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-900 md:text-[0.98rem]">
                     {currentQuestion?.content}
                   </p>
                 </div>
@@ -549,19 +551,19 @@ export function InterviewView() {
               </div>
             </div>
 
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_280px]">
-              <div className="flex min-h-0 flex-col rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
-                <div className="mb-4 flex items-center justify-between gap-3">
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_256px]">
+              <div className="flex min-h-0 flex-col rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
-                    <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-primary">Interview Flow</p>
-                    <p className="text-sm text-slate-500">Previous prompts and captured candidate responses</p>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Interview Flow</p>
+                    <p className="text-xs text-slate-500">Previous prompts and captured candidate responses</p>
                   </div>
                 </div>
 
-                <ScrollArea className="min-h-0 flex-1 pr-4" ref={scrollAreaRef}>
-                  <div className="space-y-6 pb-4">
+                <ScrollArea className="min-h-0 flex-1 pr-3" ref={scrollAreaRef}>
+                  <div className="space-y-4 pb-3">
                     {transcriptMessages.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
                         Previous questions and answers will appear here after the conversation starts.
                       </div>
                     ) : transcriptMessages.map((message) => (
@@ -573,7 +575,7 @@ export function InterviewView() {
                           </Avatar>
                         )}
                         <div
-                          className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm shadow-sm ${
+                          className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${
                             message.role === 'ai' ? 'bg-slate-50 text-slate-800 border border-slate-200' : 'bg-slate-900 text-white'
                           }`}
                         >
@@ -585,24 +587,24 @@ export function InterviewView() {
                 </ScrollArea>
               </div>
 
-              <div className="flex flex-col gap-4">
-                <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
-                  <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-primary">Response Controls</p>
-                  <div className="mt-4 grid gap-3">
-                    <Button onClick={handleRecordToggle} disabled={!audioStream} className="h-12 rounded-2xl">
+              <div className="flex flex-col gap-3">
+                <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Response Controls</p>
+                  <div className="mt-3 grid gap-2.5">
+                    <Button onClick={handleRecordToggle} disabled={!audioStream} className="h-11 rounded-2xl">
                       {isRecordingControlled ? "Stop Recording" : "Record Answer"}
                     </Button>
-                    <Button onClick={handleSubmitAnswer} variant="outline" className="h-12 rounded-2xl border-slate-300">
+                    <Button onClick={handleSubmitAnswer} variant="outline" className="h-11 rounded-2xl border-slate-300">
                       {currentQuestionIndex + 1 >= totalQuestionCount ? "Submit & Finish" : "Submit Answer"}
                     </Button>
                   </div>
-                  <p className="mt-3 text-xs text-muted-foreground">
+                  <p className="mt-2.5 text-xs text-muted-foreground">
                     Use record to capture your response, then submit to move to the next question. You can also submit without recording to skip.
                   </p>
                 </div>
 
                 <div
-                  className={`rounded-[2rem] border-2 border-dashed p-5 transition-all ${
+                  className={`rounded-[2rem] border-2 border-dashed p-4 transition-all ${
                     isListening ? "border-primary/40 bg-primary/[0.03]" : "border-slate-200 bg-slate-50/70"
                   }`}
                 >
