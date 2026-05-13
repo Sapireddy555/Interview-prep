@@ -3,6 +3,8 @@ export const GENERAL_OPENING_QUESTIONS = [
   "Why are you interested in this role, and what kind of impact are you hoping to make in your next position?",
 ];
 
+const TOTAL_INTERVIEW_QUESTIONS = 12;
+
 const GEN_AI_TECHNICAL_QUESTIONS = [
   "Can you explain the fundamental difference between encoder-only, decoder-only, and encoder-decoder architectures such as BERT, GPT, and T5?",
   "How does multi-head attention work inside a transformer-based model?",
@@ -142,7 +144,8 @@ const SOFTWARE_ENGINEER_TECHNICAL_QUESTIONS = [
 ];
 
 function buildInterviewQuestionSet(technicalQuestions: string[]): string[] {
-  return [...GENERAL_OPENING_QUESTIONS, ...technicalQuestions];
+  const technicalQuestionCount = Math.max(0, TOTAL_INTERVIEW_QUESTIONS - GENERAL_OPENING_QUESTIONS.length);
+  return [...GENERAL_OPENING_QUESTIONS, ...technicalQuestions.slice(0, technicalQuestionCount)];
 }
 
 export const ROLE_BASED_QUESTIONS: Record<string, string[]> = {
@@ -170,7 +173,8 @@ export function getQuestionListForRole(role: string, questionBank?: string): str
     .filter(Boolean);
 
   if (customQuestions.length > 0) {
-    return [...GENERAL_OPENING_QUESTIONS, ...customQuestions];
+    const technicalQuestionCount = Math.max(0, TOTAL_INTERVIEW_QUESTIONS - GENERAL_OPENING_QUESTIONS.length);
+    return [...GENERAL_OPENING_QUESTIONS, ...customQuestions.slice(0, technicalQuestionCount)];
   }
 
   return ROLE_BASED_QUESTIONS[role] || ROLE_BASED_QUESTIONS["Software Engineer"];

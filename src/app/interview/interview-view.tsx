@@ -69,7 +69,7 @@ export function InterviewView() {
     setDraftResponse(text.trim());
   }, []);
 
-  const { isListening, isSpeaking, isVoiceEnabled, currentTranscript, toggleVoice, startContinuous, stopContinuous, resetTranscript } =
+  const { isListening, isSpeaking, isVoiceEnabled, toggleVoice, startContinuous, stopContinuous, resetTranscript } =
     useAzureSpeech(onFinalResult, toast);
 
   const runProctoring = useCallback(async () => {
@@ -346,12 +346,6 @@ export function InterviewView() {
     }
   };
 
-  useEffect(() => {
-    if (isRecordingControlled) {
-      setDraftResponse(currentTranscript);
-    }
-  }, [currentTranscript, isRecordingControlled]);
-
   const handleSubmitAnswer = async () => {
     if (isRecordingControlled) {
       await stopControlledRecording();
@@ -561,16 +555,6 @@ export function InterviewView() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-2 border-t border-white/10 bg-white/5 px-3 py-2.5 text-sm">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-2">
-                  <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/50">Mic</p>
-                  <p className="mt-1 text-xs font-semibold text-white">{isMicActive ? "Unmuted" : "Muted"}</p>
-                </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-2">
-                  <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-white/50">Violations</p>
-                  <p className="mt-1 text-xs font-semibold text-white">{violations.length} detected</p>
-                </div>
-              </div>
             </div>
           </aside>
 
