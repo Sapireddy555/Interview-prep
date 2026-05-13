@@ -4,6 +4,28 @@ import { AzureKeyCredential } from "@azure/core-auth";
 const endpoint = process.env.AZURE_VISION_ENDPOINT || "";
 const key = process.env.AZURE_VISION_KEY || "";
 
+function getImageDimensions(result: any) {
+  const width = result?.metadata?.width ?? result?.imageMetadata?.width ?? result?.width ?? 0;
+  const height = result?.metadata?.height ?? result?.imageMetadata?.height ?? result?.height ?? 0;
+  return { width, height };
+}
+
+function isPersonOffCenter(person: any, result: any) {
+  const bbox = person?.boundingBox;
+  if (!bbox) return false;
+
+  const { width } = getImageDimensions(result);
+  const x = bbox.x ?? bbox.left ?? 0;
+  const w = bbox.w ?? bbox.width ?? 0;
+
+  if (!width || !w) return false;
+
+  const centerX = (x + w / 2) / width;
+  const relativeWidth = w / width;
+
+  return centerX < 0.2 || centerX > 0.8 || relativeWidth < 0.12;
+}
+
 export async function analyzeFrameWithAzure(imageDataUri: string) {
   if (!endpoint || !key) {
     console.warn("Azure Vision credentials missing. Returning default no-violation.");
@@ -44,8 +66,12 @@ export async function analyzeFrameWithAzure(imageDataUri: string) {
       warningMessage = "Please keep your face visible to the camera.";
     } else if (people.length > 1) {
       hasViolation = true;
-      violationType = 'none'; // Custom type could be 'multiple_people'
+      violationType = 'looking_away';
       warningMessage = "Multiple individuals detected in frame. Please ensure zero interference.";
+    } else if (isPersonOffCenter(people[0], result)) {
+      hasViolation = true;
+      violationType = 'looking_away';
+      warningMessage = "Please face the camera and remain centered during the interview.";
     }
 
     // 2. Object Detection (Phone check)

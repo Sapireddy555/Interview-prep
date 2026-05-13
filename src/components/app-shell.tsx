@@ -46,7 +46,26 @@ export function AppShell({ children, hideLayout = false }: { children: React.Rea
   if (hideLayout) {
     return (
       <div className="min-h-screen bg-slate-50 flex flex-col">
-        <main className="flex-1 flex flex-col pt-8 pb-12 px-4 md:px-8">
+        <header className="sticky top-0 z-50 border-b bg-white/90 px-4 py-4 backdrop-blur-md md:px-8">
+          <div className="mx-auto flex w-full max-w-7xl items-center gap-4">
+            <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+              <Image
+                src={organizationLogo}
+                alt="ValueMomentum Logo"
+                className="h-5 w-auto object-contain"
+                style={{ filter: "brightness(0) saturate(100%) invert(32%) sepia(95%) saturate(3083%) hue-rotate(213deg) brightness(99%) contrast(101%)" }}
+              />
+            </div>
+            <div className="h-6 w-px bg-slate-200" />
+            <div className="flex items-center gap-2">
+              <div className="flex h-6 w-6 items-center justify-center rounded-md border bg-[#F8F8F8] text-[10px] font-black text-[#056BFC]">A</div>
+              <span className="bg-gradient-to-r from-[#303030] to-[#056BFC] bg-clip-text text-lg font-bold text-transparent">
+                Aura
+              </span>
+            </div>
+          </div>
+        </header>
+        <main className="flex-1 flex flex-col pt-6 pb-12 px-4 md:px-8">
           {children}
         </main>
       </div>
@@ -57,8 +76,13 @@ export function AppShell({ children, hideLayout = false }: { children: React.Rea
     <div className="flex flex-col min-h-screen bg-slate-50">
       <header className="flex h-16 items-center justify-between border-b bg-white/80 backdrop-blur-md px-6 sticky top-0 z-50">
         <div className="flex items-center gap-6">
-          <div className="bg-[#056BFC] p-1.5 rounded-lg shadow-sm">
-             <Image src={organizationLogo} alt="ValueMomentum Logo" className="h-5 w-auto object-contain" />
+          <div className="rounded-lg border border-slate-200 bg-white px-3 py-2 shadow-sm">
+             <Image
+               src={organizationLogo}
+               alt="ValueMomentum Logo"
+               className="h-5 w-auto object-contain"
+               style={{ filter: "brightness(0) saturate(100%) invert(32%) sepia(95%) saturate(3083%) hue-rotate(213deg) brightness(99%) contrast(101%)" }}
+             />
           </div>
           <div className="w-px h-6 bg-slate-200" />
           <div className="flex items-center gap-2">

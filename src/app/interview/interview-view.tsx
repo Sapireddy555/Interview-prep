@@ -6,17 +6,13 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot } from "@/app/actions";
 import { getQuestionListForRole } from "@/lib/interview-constants";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { MicOff, Volume2, VolumeX, Loader2, ChevronRight } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
 import type { InterviewSettings, Message, SecurityEvent } from "@/lib/types";
-import { PlaceHolderImages } from "@/lib/placeholder-images";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useAzureSpeech } from "@/hooks/use-azure-speech";
-import { useRouter } from "next/navigation";
 import { useToast } from "@/hooks/use-toast";
 
 export function InterviewView() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const [settings, setSettings] = useState<InterviewSettings | null>(null);
@@ -28,18 +24,16 @@ export function InterviewView() {
   const [audioStream, setAudioStream] = useState<MediaStream | null>(null);
   const [isRecordingControlled, setIsRecordingControlled] = useState(false);
   const controlledRecorderRef = useRef<MediaRecorder | null>(null);
-  const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
   const [remainingSeconds, setRemainingSeconds] = useState(60 * 60); // 60 minutes
   const [violations, setViolations] = useState<{ timestamp: string; message: string }[]>([]);
   const [showViolationsPanel, setShowViolationsPanel] = useState(false);
   const [interviewId, setInterviewId] = useState<string | null>(null);
   const [isCompleted, setIsCompleted] = useState(false);
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const [draftResponse, setDraftResponse] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const interviewStartTime = useRef<Date | null>(null);
   const proctoringIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunkIndexRef = useRef<number>(0);
   const violationsRef = useRef<{ timestamp: string; message: string }[]>([]);
   const securityEventsRef = useRef<SecurityEvent[]>([]);
@@ -47,36 +41,36 @@ export function InterviewView() {
   const isMountedRef = useRef(true);
   const proctorVideoRef = useRef<HTMLVideoElement>(null);
   const timerRef = useRef<number | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
 
-  const getRelativeTimestamp = () => {
+  const getRelativeTimestamp = useCallback(() => {
     if (!interviewStartTime.current) return new Date().toISOString();
     const diff = Math.max(0, Date.now() - (interviewStartTime.current?.getTime() || 0));
     const mm = Math.floor(diff / 60000).toString().padStart(2, "0");
     const ss = Math.floor((diff % 60000) / 1000).toString().padStart(2, "0");
     return `${mm}:${ss}`;
-  };
+  }, []);
 
-  const addSecurityEvent = (type: SecurityEvent["type"], details?: string) => {
+  const addSecurityEvent = useCallback((type: SecurityEvent["type"], details?: string) => {
     const evt: SecurityEvent = { timestamp: getRelativeTimestamp(), type, details };
     securityEventsRef.current.push(evt);
-  };
-
-  const [showNextButton, setShowNextButton] = useState(false);
+  }, [getRelativeTimestamp]);
 
   const totalQuestionCount =
     questionListState.length || getQuestionListForRole(settings?.role || "", settings?.questionBank).length;
 
-  const formattedRemainingTime = `${Math.floor(remainingSeconds / 60)
+  const formattedRemainingTime = `${Math.floor(remainingSeconds / 3600)
+    .toString()
+    .padStart(2, "0")}:${Math.floor((remainingSeconds % 3600) / 60)
     .toString()
     .padStart(2, "0")}:${(remainingSeconds % 60).toString().padStart(2, "0")}`;
 
   const onFinalResult = useCallback((text: string) => {
-    const msg: Message = { id: Date.now().toString(), role: 'user', content: text };
-    setMessages(prev => [...prev, msg]);
-    setShowNextButton(true);
+    setDraftResponse(text.trim());
   }, []);
 
-  const { isListening, isSpeaking, isVoiceEnabled, toggleVoice } = useAzureSpeech(onFinalResult, toast);
+  const { isListening, isSpeaking, isVoiceEnabled, currentTranscript, toggleVoice, startContinuous, stopContinuous, resetTranscript } =
+    useAzureSpeech(onFinalResult, toast);
 
   const runProctoring = useCallback(async () => {
     if (!isMountedRef.current) return;
@@ -204,10 +198,7 @@ export function InterviewView() {
             }
         }
 
-        proctoringIntervalRef.current = setInterval(runProctoring, 5000);
-
-        // timer
-        timerRef.current = window.setInterval(() => setRemainingSeconds(s => Math.max(0, s - 1)), 1000);
+        proctoringIntervalRef.current = setInterval(runProctoring, 3000);
 
         const onVisibility = () => {
           addSecurityEvent(document.hidden ? "visibility_hidden" : "visibility_visible");
@@ -268,22 +259,43 @@ export function InterviewView() {
         if ((window as any).__auraSecCleanup) {
           try { (window as any).__auraSecCleanup(); } catch {}
         }
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
-            mediaRecorderRef.current.stop();
-        }
         if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
           controlledRecorderRef.current.stop();
-        }
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
         }
     }
   }, [toast, runProctoring, searchParams]);
 
+  useEffect(() => {
+    if (!interviewId || isCompleted) return;
+
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+
+    timerRef.current = window.setInterval(() => {
+      setRemainingSeconds((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [interviewId, isCompleted]);
+
+  useEffect(() => {
+    if (remainingSeconds === 0 && !isCompleted) {
+      handleInterviewCompletion(messages);
+    }
+  }, [isCompleted, messages, remainingSeconds]);
+
   const startControlledRecording = () => {
     if (!audioStream || !interviewId) return;
     try {
+      recordedChunksRef.current = [];
+      resetTranscript();
+      setDraftResponse("");
       let recorder: MediaRecorder;
       try {
         recorder = new MediaRecorder(audioStream, { mimeType: 'audio/webm;codecs=opus' });
@@ -291,13 +303,15 @@ export function InterviewView() {
         recorder = new MediaRecorder(audioStream);
       }
       controlledRecorderRef.current = recorder;
-      setRecordedChunks([]);
       recorder.ondataavailable = (e) => {
-        if (e.data.size > 0) setRecordedChunks(prev => [...prev, e.data]);
+        if (e.data.size > 0) {
+          recordedChunksRef.current.push(e.data);
+        }
       };
       recorder.onstop = async () => {
         if (!interviewId) return;
-        const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+        const chunks = recordedChunksRef.current;
+        const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
         const formData = new FormData();
         formData.append('interviewId', interviewId);
         formData.append('chunkIndex', chunkIndexRef.current.toString());
@@ -310,36 +324,73 @@ export function InterviewView() {
         }
       };
       recorder.start();
+      startContinuous();
       setIsRecordingControlled(true);
     } catch (err) {
       console.error('Start recording error', err);
     }
   };
 
-  const stopControlledRecordingAndSubmit = async () => {
+  const stopControlledRecording = async () => {
     if (controlledRecorderRef.current && controlledRecorderRef.current.state !== 'inactive') {
       controlledRecorderRef.current.stop();
     }
+    stopContinuous();
     setIsRecordingControlled(false);
-    // advance to next question after uploading
-    handleNextQuestion();
   };
 
   const handleRecordToggle = () => {
     if (!isRecordingControlled) startControlledRecording();
-    else if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
-      controlledRecorderRef.current.stop();
-      setIsRecordingControlled(false);
+    else {
+      void stopControlledRecording();
     }
   };
 
+  useEffect(() => {
+    if (isRecordingControlled) {
+      setDraftResponse(currentTranscript);
+    }
+  }, [currentTranscript, isRecordingControlled]);
+
   const handleSubmitAnswer = async () => {
     if (isRecordingControlled) {
-      await stopControlledRecordingAndSubmit();
+      await stopControlledRecording();
+      toast({
+        title: "Recording stopped",
+        description: "Review or edit your response, then click Submit Answer.",
+      });
       return;
     }
 
-    handleNextQuestion();
+    const trimmedResponse = draftResponse.trim();
+    if (!trimmedResponse) {
+      toast({
+        title: "No response entered",
+        description: "Record or type a response before submitting, or use Skip Question.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const updatedMessages = [
+      ...messages,
+      { id: `${Date.now()}_user`, role: "user" as const, content: trimmedResponse },
+    ];
+
+    setMessages(updatedMessages);
+    setDraftResponse("");
+    resetTranscript();
+    handleNextQuestion(updatedMessages);
+  };
+
+  const handleSkipQuestion = async () => {
+    if (isRecordingControlled) {
+      await stopControlledRecording();
+    }
+
+    setDraftResponse("");
+    resetTranscript();
+    handleNextQuestion(messages);
   };
 
   useEffect(() => {
@@ -372,6 +423,9 @@ export function InterviewView() {
       const firstQuestion = orderedQuestionList[0] ?? "Tell me about yourself.";
       const firstMessage: Message = { id: Date.now().toString(), role: "ai", content: firstQuestion };
       setMessages([firstMessage]);
+      setDraftResponse("");
+      setRemainingSeconds(60 * 60);
+      resetTranscript();
       
       setTimeout(() => {
           setIsLoading(false);
@@ -380,18 +434,7 @@ export function InterviewView() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, toast]);
 
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      scrollAreaRef.current.scrollTo({
-        top: scrollAreaRef.current.scrollHeight,
-        behavior: "smooth",
-      });
-    }
-  }, [messages]);
-
-  const aiAvatar = PlaceHolderImages.find(img => img.id === 'ai-avatar');
-
-  const handleNextQuestion = () => {
+  const handleNextQuestion = (updatedMessages: Message[] = messages) => {
     const nextIndex = currentQuestionIndex + 1;
     const questionList =
       questionListState.length
@@ -401,11 +444,10 @@ export function InterviewView() {
     if (nextIndex < questionList.length) {
       const nextQuestion = questionList[nextIndex];
       const aiMessage: Message = { id: Date.now().toString(), role: 'ai', content: nextQuestion };
-      setMessages(prev => [...prev, aiMessage]);
+      setMessages([...updatedMessages, aiMessage]);
       setCurrentQuestionIndex(nextIndex);
-      setShowNextButton(false);
     } else {
-      handleInterviewCompletion(messages);
+      handleInterviewCompletion(updatedMessages);
     }
   };
 
@@ -421,11 +463,8 @@ export function InterviewView() {
     );
   }
 
-  const isLastMessageFromAI = messages.length > 0 && messages[messages.length - 1].role === 'ai';
   const currentQuestion = [...messages].reverse().find((message) => message.role === "ai");
-  const transcriptMessages = currentQuestion
-    ? messages.filter((message) => message.role === "user" || message.id !== currentQuestion.id)
-    : messages;
+  const isMicActive = isRecordingControlled || isListening;
 
   if (isCompleted) {
     return (
@@ -483,7 +522,7 @@ export function InterviewView() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(340px,420px)_minmax(0,1fr)]">
+        <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[minmax(280px,360px)_minmax(0,1fr)]">
           <aside className="min-h-0 lg:sticky lg:top-0 lg:self-start">
             <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-950 text-white shadow-2xl">
               <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
@@ -497,7 +536,7 @@ export function InterviewView() {
                 </div>
               </div>
 
-              <div className="relative aspect-[4/5] bg-slate-900">
+              <div className="relative aspect-[4/4.6] bg-slate-900">
                 <video
                   ref={videoRef}
                   className="h-full w-full object-cover"
@@ -531,7 +570,7 @@ export function InterviewView() {
               <div className="grid grid-cols-2 gap-3 border-t border-white/10 bg-white/5 px-5 py-4 text-sm">
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/50">Mic</p>
-                  <p className="mt-1 font-semibold text-white">{isListening ? "Active" : "Muted"}</p>
+                  <p className="mt-1 font-semibold text-white">{isMicActive ? "Unmuted" : "Muted"}</p>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
                   <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/50">Violations</p>
@@ -545,7 +584,9 @@ export function InterviewView() {
             <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Current Question</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">
+                    Current Question - {String(currentQuestionIndex + 1).padStart(2, "0")}
+                  </p>
                   <p className="mt-2 text-sm font-semibold leading-6 text-slate-900 md:text-[0.98rem]">
                     {currentQuestion?.content}
                   </p>
@@ -556,42 +597,7 @@ export function InterviewView() {
               </div>
             </div>
 
-            <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_256px]">
-              <div className="flex min-h-0 flex-col rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Interview Flow</p>
-                    <p className="text-xs text-slate-500">Previous prompts and captured candidate responses</p>
-                  </div>
-                </div>
-
-                <ScrollArea className="min-h-0 flex-1 pr-3" ref={scrollAreaRef}>
-                  <div className="space-y-4 pb-3">
-                    {transcriptMessages.length === 0 ? (
-                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-500">
-                        Previous questions and answers will appear here after the conversation starts.
-                      </div>
-                    ) : transcriptMessages.map((message) => (
-                      <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
-                        {message.role === 'ai' && (
-                          <Avatar className={`h-8 w-8 ring-1 ring-slate-200 ${isSpeaking && isLastMessageFromAI && message.id === messages[messages.length - 1].id ? "ring-2 ring-primary scale-105" : ""}`}>
-                            <AvatarImage src={aiAvatar?.imageUrl} />
-                            <AvatarFallback>AI</AvatarFallback>
-                          </Avatar>
-                        )}
-                        <div
-                          className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm shadow-sm ${
-                            message.role === 'ai' ? 'bg-slate-50 text-slate-800 border border-slate-200' : 'bg-slate-900 text-white'
-                          }`}
-                        >
-                          <p className="leading-relaxed">{message.content}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </div>
-
+            <div className="grid gap-3">
               <div className="flex flex-col gap-3">
                 <div className="rounded-[2rem] border border-slate-200 bg-white p-4 shadow-sm">
                   <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Response Controls</p>
@@ -602,19 +608,30 @@ export function InterviewView() {
                     <Button onClick={handleSubmitAnswer} variant="outline" className="h-11 rounded-2xl border-slate-300">
                       {currentQuestionIndex + 1 >= totalQuestionCount ? "Submit & Finish" : "Submit Answer"}
                     </Button>
+                    <Button onClick={handleSkipQuestion} variant="ghost" className="h-11 rounded-2xl text-slate-600">
+                      Skip Question
+                    </Button>
+                  </div>
+                  <div className="mt-3">
+                    <Textarea
+                      value={draftResponse}
+                      onChange={(event) => setDraftResponse(event.target.value)}
+                      placeholder="Your recorded response will appear here. You can edit it before submitting."
+                      className="min-h-28 rounded-2xl border-slate-200 resize-none"
+                    />
                   </div>
                   <p className="mt-2.5 text-xs text-muted-foreground">
-                    Use record to capture your response, then submit to move to the next question. You can also submit without recording to skip.
+                    Click on "Record Answer" to record your answer. Click "Submit Answer" to move to next question.
                   </p>
                 </div>
 
                 <div
                   className={`rounded-[2rem] border-2 border-dashed p-4 transition-all ${
-                    isListening ? "border-primary/40 bg-primary/[0.03]" : "border-slate-200 bg-slate-50/70"
+                    isMicActive ? "border-primary/40 bg-primary/[0.03]" : "border-slate-200 bg-slate-50/70"
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    {isListening ? (
+                    {isMicActive ? (
                       <div className="flex gap-1">
                         {[1, 2, 3, 4].map((i) => (
                           <div
@@ -628,8 +645,8 @@ export function InterviewView() {
                       <MicOff className="h-4 w-4 text-slate-400" />
                     )}
                     <div>
-                      <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${isListening ? "text-primary" : "text-slate-500"}`}>
-                        {isListening ? "Live Audio Stream" : "Awaiting Input"}
+                      <p className={`text-[10px] font-bold uppercase tracking-[0.2em] ${isMicActive ? "text-primary" : "text-slate-500"}`}>
+                        {isMicActive ? "Live Audio Stream" : "Awaiting Input"}
                       </p>
                       <p className="mt-1 text-sm text-slate-600">
                         {isRecordingControlled ? "Recording answer now." : "Press record when you're ready to respond."}
@@ -637,17 +654,6 @@ export function InterviewView() {
                     </div>
                   </div>
                 </div>
-
-                {showNextButton && !isSpeaking && (
-                  <Button
-                    size="lg"
-                    onClick={handleNextQuestion}
-                    className="h-12 rounded-2xl bg-primary font-bold shadow-lg hover:bg-primary/90"
-                  >
-                    {currentQuestionIndex + 1 >= totalQuestionCount ? "Finish Interview" : "Proceed to Next Question"}
-                    <ChevronRight className="ml-2 h-5 w-5" />
-                  </Button>
-                )}
 
                 <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm">
                   <div className="flex items-center justify-between gap-3">

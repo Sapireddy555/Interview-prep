@@ -12,6 +12,7 @@ export interface SpeechHookResult {
   speak: (text: string) => void;
   startContinuous: () => void;
   stopContinuous: () => void;
+  resetTranscript: () => void;
 }
 
 export const useAzureSpeech = (
@@ -24,9 +25,13 @@ export const useAzureSpeech = (
   const [currentTranscript, setCurrentTranscript] = useState("");
   
   const recognizerRef = useRef<SpeechSDK.SpeechRecognizer | null>(null);
-  const silenceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const accumulatedTranscriptRef = useRef<string>("");
   const isStartingRef = useRef<boolean>(false);
+
+  const resetTranscript = useCallback(() => {
+    accumulatedTranscriptRef.current = "";
+    setCurrentTranscript("");
+  }, []);
 
   const stopContinuous = useCallback(() => {
     if (recognizerRef.current) {
@@ -35,14 +40,17 @@ export const useAzureSpeech = (
         recognizerRef.current = null;
       });
     }
-    if (silenceTimerRef.current) {
-        clearTimeout(silenceTimerRef.current);
+
+    const finalTranscript = accumulatedTranscriptRef.current.trim();
+    if (finalTranscript.length > 0) {
+      onFinalResult(finalTranscript);
     }
-  }, []);
+  }, [onFinalResult]);
 
   const startContinuous = useCallback(async () => {
     if (recognizerRef.current || isStartingRef.current || isSpeaking) return;
     isStartingRef.current = true;
+    resetTranscript();
 
     try {
       const res = await fetch('/api/speech-token');
@@ -55,26 +63,20 @@ export const useAzureSpeech = (
       const recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
 
       recognizer.recognizing = (s, e) => {
-        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-        setCurrentTranscript(accumulatedTranscriptRef.current + " " + e.result.text);
+        const partialTranscript = [accumulatedTranscriptRef.current, e.result.text]
+          .map((part) => part.trim())
+          .filter(Boolean)
+          .join(" ");
+        setCurrentTranscript(partialTranscript);
       };
 
       recognizer.recognized = (s, e) => {
         if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
-          accumulatedTranscriptRef.current += " " + e.result.text;
+          accumulatedTranscriptRef.current = [accumulatedTranscriptRef.current, e.result.text]
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .join(" ");
           setCurrentTranscript(accumulatedTranscriptRef.current);
-
-          // Reset silence timer on every chunk of recognized speech
-          if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
-          
-          silenceTimerRef.current = setTimeout(() => {
-            const final = accumulatedTranscriptRef.current.trim();
-            if (final.length > 5) {
-                onFinalResult(final);
-                accumulatedTranscriptRef.current = ""; // Clear for next answer
-                setCurrentTranscript("");
-            }
-          }, 3500); // 3.5 seconds of silence for auto-submission
         }
       };
 
@@ -93,7 +95,7 @@ export const useAzureSpeech = (
     } finally {
       isStartingRef.current = false;
     }
-  }, [onFinalResult, toast, isSpeaking]);
+  }, [isSpeaking, onFinalResult, resetTranscript, toast]);
 
   const preferredVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
@@ -154,6 +156,7 @@ export const useAzureSpeech = (
     toggleVoice, 
     speak, 
     startContinuous, 
-    stopContinuous 
+    stopContinuous,
+    resetTranscript,
   };
 };
