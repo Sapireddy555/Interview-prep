@@ -65,7 +65,7 @@ export function AppShell({ children, hideLayout = false }: { children: React.Rea
             </div>
           </div>
         </header>
-        <main className="flex-1 flex flex-col pt-6 pb-12 px-4 md:px-8">
+        <main className="flex-1 flex flex-col pt-3 pb-10 px-4 md:px-8">
           {children}
         </main>
       </div>
