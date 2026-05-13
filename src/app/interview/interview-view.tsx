@@ -415,6 +415,10 @@ export function InterviewView() {
   }
 
   const isLastMessageFromAI = messages.length > 0 && messages[messages.length - 1].role === 'ai';
+  const currentQuestion = [...messages].reverse().find((message) => message.role === "ai");
+  const transcriptMessages = currentQuestion
+    ? messages.filter((message) => message.role === "user" || message.id !== currentQuestion.id)
+    : messages;
 
   if (isCompleted) {
     return (
@@ -535,7 +539,9 @@ export function InterviewView() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-primary">Current Question</p>
-                  <p className="mt-3 text-lg font-semibold leading-8 text-slate-900">{messages[messages.length - 1]?.content}</p>
+                  <p className="mt-3 text-base font-semibold leading-7 text-slate-900 md:text-[1.05rem]">
+                    {currentQuestion?.content}
+                  </p>
                 </div>
                 <Button onClick={toggleVoice} variant="outline" size="sm" className="rounded-full bg-white" disabled={isSpeaking}>
                   {isVoiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
@@ -548,13 +554,17 @@ export function InterviewView() {
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-[0.24em] text-primary">Interview Flow</p>
-                    <p className="text-sm text-slate-500">Questions and captured candidate responses</p>
+                    <p className="text-sm text-slate-500">Previous prompts and captured candidate responses</p>
                   </div>
                 </div>
 
                 <ScrollArea className="min-h-0 flex-1 pr-4" ref={scrollAreaRef}>
                   <div className="space-y-6 pb-4">
-                    {messages.map((message) => (
+                    {transcriptMessages.length === 0 ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                        Previous questions and answers will appear here after the conversation starts.
+                      </div>
+                    ) : transcriptMessages.map((message) => (
                       <div key={message.id} className={`flex items-start gap-4 ${message.role === 'user' ? 'justify-end' : ''}`}>
                         {message.role === 'ai' && (
                           <Avatar className={`h-8 w-8 ring-1 ring-slate-200 ${isSpeaking && isLastMessageFromAI && message.id === messages[messages.length - 1].id ? "ring-2 ring-primary scale-105" : ""}`}>
