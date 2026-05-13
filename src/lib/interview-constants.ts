@@ -1,89 +1,180 @@
-
-export const GEN_AI_QUESTIONS = [
-  // Phase 1: General Introduction (2 questions)
-  "Could you please introduce yourself and walk us through your professional background and experience in software engineering?",
-  "What specifically draws you to the field of Generative AI, and why are you interested in this role at our organization?",
-
-  // Phase 2: Technical Deep Dive - Generative AI & LLMs (18 questions)
-  "Can you explain the fundamental difference between Encoder-only, Decoder-only, and Encoder-Decoder architectures (like BERT, GPT, and T5)?",
-  "How does the Attention mechanism—specifically Multi-Head Attention—work within a Transformer-based model?",
-  "What are the common strategies for fine-tuning Large Language Models (LLMs)? Can you explain Parameter-Efficient Fine-Tuning (PEFT) methods like LoRA?",
-  "Can you describe the end-to-end architecture and workflow of a Retrieval-Augmented Generation (RAG) system?",
-  "How do you address 'hallucinations' in LLM outputs, and what validation or evaluation techniques do you use to ensure factual accuracy?",
-  "What are Vector Databases, and how do they function within a GenAI application for high-dimensional similarity search?",
-  "Explain the concept of 'Embeddings.' How do different embedding models impact the performance of a retrieval system?",
-  "What is Prompt Engineering? Can you share some advanced techniques you've used, such as Chain-of-Thought or Few-Shot prompting?",
-  "How do you optimize LLM inference for production? Tell us about techniques like Quantization (INT8/FP4) or KV-Caching.",
-  "What are the ethical considerations and safety guardrails you implement when deploying a GenAI model to production?",
-  "How do you handle context window limitations when processing extremely long documents or extended conversations?",
-  "Can you explain the difference between a 'Base Model' and an 'Instruction-Tuned Model' (SFT)?",
-  "What is Reinforcement Learning from Human Feedback (RLHF), and why is it crucial for aligning LLM behavior with human intent?",
-  "How would you approach building a multi-modal application that integrates text and image generation capabilities?",
-  "What are the primary challenges of scaling GenAI applications in a production environment with high user concurrency?",
-  "How do you evaluate the quality of a GenAI system? What metrics or frameworks (e.g., RAGAS, LLM-as-a-judge) do you find most reliable?",
-  "Can you describe how you would implement an efficient caching strategy for LLM responses to reduce both latency and API costs?",
-  "If you were to build an autonomous AI Agent, what architectural patterns (e.g., ReAct, Tool-Calling) and frameworks would you choose?"
+export const GENERAL_OPENING_QUESTIONS = [
+  "Tell me about yourself and walk me through the experience that has prepared you for this role.",
+  "Why are you interested in this role, and what kind of impact are you hoping to make in your next position?",
 ];
 
-export const REACT_QUESTIONS = [
-  // Phase 1: General Introduction (2 questions)
-  "Could you please introduce yourself and walk us through your experience building user interfaces with React?",
-  "What do you find most compelling about the React ecosystem, and why are you interested in this Frontend Engineer role?",
+const GEN_AI_TECHNICAL_QUESTIONS = [
+  "Can you explain the fundamental difference between encoder-only, decoder-only, and encoder-decoder architectures such as BERT, GPT, and T5?",
+  "How does multi-head attention work inside a transformer-based model?",
+  "What are the common strategies for fine-tuning large language models, and when would you choose PEFT methods such as LoRA?",
+  "Can you describe the end-to-end architecture and workflow of a retrieval-augmented generation system?",
+  "How do you reduce hallucinations in LLM outputs, and what evaluation techniques do you use to measure factual accuracy?",
+  "What are vector databases, and how do they support high-dimensional similarity search in GenAI systems?",
+  "Explain embeddings and how the choice of embedding model affects retrieval quality.",
+  "What advanced prompt-engineering techniques have you used, such as few-shot prompting or chain-of-thought prompting?",
+  "How do you optimize LLM inference for production using techniques such as quantization or KV caching?",
+  "What ethical and safety guardrails do you implement before deploying a GenAI system to production?",
+  "How do you handle context-window limitations when processing long documents or extended conversations?",
+  "What is the difference between a base model and an instruction-tuned model?",
+  "How would you explain RLHF, and why is it important for aligning model behavior with user intent?",
+  "How would you approach building a multimodal application that combines text and image generation?",
+  "What are the biggest challenges of scaling GenAI systems in production under high concurrency?",
+  "How do you evaluate the quality of a GenAI system, and which metrics or frameworks do you trust most?",
+  "How would you design a caching strategy for LLM responses to reduce latency and cost?",
+  "If you were building an autonomous agent, what architectural patterns and frameworks would you choose?",
+  "How do you secure prompt inputs, tool calls, and output handling in a production LLM application?",
+  "Describe a GenAI project where you had to balance quality, latency, and cost. What trade-offs did you make?",
+];
 
-  // Phase 2: Technical Deep Dive - React & Frontend (18 questions)
+const REACT_TECHNICAL_QUESTIONS = [
   "What are the most significant features introduced in React 18, and how do they improve application performance?",
-  "Can you explain how the React Reconciliation algorithm and the Virtual DOM work?",
-  "What are the best practices for managing complex state in large React applications? When would you choose Context API over a library like Redux or Zustand?",
-  "How do you optimize React component rendering? Tell us about useMemo, useCallback, and React.memo.",
-  "What is your strategy for handling side effects in React? How do you ensure useEffect cleanup functions are properly implemented?",
-  "Can you explain the concept of 'Concurrent Rendering' and how features like Transition API work?",
-  "How do you approach Server-Side Rendering (SSR) vs. Static Site Generation (SSG) in a Next.js environment?",
-  "What is the 'Hydration' process in React, and what common issues (like hydration mismatch) have you encountered?",
-  "How do you ensure your React applications are accessible (A11y)? What tools or patterns do you use?",
-  "What is your preferred approach to styling React components (e.g., Tailwind CSS, CSS Modules, or Styled Components) and why?",
-  "How do you handle form validation and submission in React? Have you used libraries like React Hook Form or Formik?",
-  "Describe your experience with React testing. What is the difference between shallow rendering and full DOM rendering in tools like Jest and React Testing Library?",
-  "How do you implement Error Boundaries in React to prevent the entire app from crashing due to a component error?",
-  "What are 'Higher-Order Components' (HOCs) and 'Render Props'? How do they compare to the Custom Hooks pattern?",
-  "How do you approach API integration and data fetching? Tell us about using React Query (TanStack Query) or SWR.",
-  "What are the security best practices you follow in React to prevent vulnerabilities like XSS or CSRF?",
-  "How do you optimize the bundle size of a React application? Tell us about code-splitting and dynamic imports.",
-  "Describe a time you had to debug a significant memory leak or performance bottleneck in a React application. How did you resolve it?"
+  "Can you explain how reconciliation and the virtual DOM work in React?",
+  "What are the best practices for managing complex state in large React applications, and when would you choose Context API over Redux or Zustand?",
+  "How do you optimize React component rendering, and when do tools like React.memo, useMemo, and useCallback actually help?",
+  "What is your strategy for handling side effects in React, and how do you ensure useEffect cleanup is done correctly?",
+  "Can you explain concurrent rendering and how transitions improve UX?",
+  "How do you decide between SSR, SSG, ISR, and client-side rendering in a Next.js application?",
+  "What is hydration in React, and how have you debugged hydration mismatches?",
+  "How do you ensure React applications are accessible, and what tools or checks do you use?",
+  "What is your preferred approach to styling React components and why?",
+  "How do you handle form validation and submission in React, and what has been your experience with libraries like React Hook Form?",
+  "How do you test React applications, and what do you consider the right balance between unit, integration, and end-to-end tests?",
+  "How do you use error boundaries and route-level fallbacks to prevent the entire app from crashing?",
+  "What are higher-order components and render props, and how do they compare with custom hooks?",
+  "How do you approach API integration and server-state management with tools like React Query or SWR?",
+  "What frontend security practices do you follow to reduce risks such as XSS, CSRF, and insecure token handling?",
+  "How do you optimize the bundle size of a React application using code splitting and lazy loading?",
+  "Describe a time you debugged a memory leak or major performance bottleneck in a React app.",
+  "How do you structure reusable component libraries and enforce consistency across teams?",
+  "What would you look for when reviewing a pull request for a large React feature?",
 ];
 
-export const JAVA_QUESTIONS = [
-  // Phase 1: General Introduction (2 questions)
-  "Could you please introduce yourself and walk us through your professional experience with Java and backend development?",
-  "What motivates you to work with the Java ecosystem, and why are you interested in this Backend Engineer role at our company?",
-
-  // Phase 2: Technical Deep Dive - Java & Backend (18 questions)
-  "What are the key features introduced in recent Java versions (e.g., Java 17 or 21) that you find most impactful?",
-  "Can you explain the JVM architecture? How does memory management (Heap vs. Stack) and Garbage Collection work?",
-  "What are 'Virtual Threads' (Project Loom), and how do they change the way we handle high-concurrency Java applications?",
-  "How does the Spring Boot 'Auto-configuration' work under the hood? Tell us about the @EnableAutoConfiguration annotation.",
-  "Can you describe the Bean lifecycle in a Spring context?",
-  "What are the best practices for building scalable Microservices using Spring Cloud or similar frameworks?",
-  "How do you handle database persistence with Hibernate or JPA? Specifically, how do you solve the N+1 select problem?",
-  "What is your approach to ensuring thread safety in a multi-threaded Java application? Tell us about the java.util.concurrent package.",
-  "Can you explain common Design Patterns (e.g., Singleton, Strategy, Observer) and how you've applied them in Java?",
-  "How do you implement security in a Java application? Describe your experience with Spring Security and JWT/OAuth2.",
-  "What is your strategy for unit and integration testing in Java? Tell us about JUnit 5 and Mockito.",
-  "How do you design and document RESTful APIs? Have you worked with Swagger/OpenAPI?",
-  "How do you optimize SQL queries and database performance in a Java-based backend?",
-  "What is your experience with message brokers like Kafka or RabbitMQ? How do you handle asynchronous communication between services?",
-  "Describe your approach to CI/CD and containerization for Java applications using Docker and Kubernetes.",
-  "What is the difference between a 'Checked Exception' and an 'Unchecked Exception' in Java, and when should each be used?",
-  "How do you monitor and profile the performance of a Java application in production (e.g., using JMX, Prometheus, or Grafana)?",
-  "Can you explain the internals of common Java Collections, such as how a HashMap handles collisions?"
+const JAVA_TECHNICAL_QUESTIONS = [
+  "What are the most important features introduced in modern Java versions such as Java 17 or 21?",
+  "Can you explain JVM architecture, including heap, stack, and garbage collection?",
+  "What are virtual threads, and how do they change concurrency handling in Java applications?",
+  "How does Spring Boot auto-configuration work under the hood?",
+  "Can you describe the bean lifecycle in a Spring application?",
+  "What are the best practices for building scalable microservices using Spring Boot and Spring Cloud?",
+  "How do you handle persistence with Hibernate or JPA, and how do you solve the N+1 query problem?",
+  "What is your approach to thread safety in Java, and when do you rely on java.util.concurrent utilities?",
+  "Which design patterns do you use most often in Java systems, and where have they been useful?",
+  "How do you implement authentication and authorization in Java applications with Spring Security and JWT or OAuth2?",
+  "What is your strategy for unit, integration, and contract testing in Java services?",
+  "How do you design and document REST APIs, and how have you used OpenAPI or Swagger?",
+  "How do you optimize SQL queries and database performance in Java-based backends?",
+  "What is your experience with Kafka or RabbitMQ, and how do you design reliable asynchronous workflows?",
+  "How do you build CI/CD pipelines and containerized deployments for Java services?",
+  "What is the difference between checked and unchecked exceptions, and how do you decide which to use?",
+  "How do you monitor and profile Java applications in production using tools such as Prometheus, Grafana, or APM products?",
+  "Can you explain how HashMap handles collisions and why that matters in practice?",
+  "How do you manage distributed transactions or eventual consistency across services?",
+  "Describe a backend incident you handled in production and how you diagnosed the root cause.",
 ];
+
+const DOTNET_TECHNICAL_QUESTIONS = [
+  "What are the key differences between .NET Framework and modern .NET, and how has that affected the way you build applications?",
+  "How do you structure an ASP.NET Core application for maintainability and testability?",
+  "Can you explain the middleware pipeline in ASP.NET Core and how request handling flows through it?",
+  "How do dependency injection and service lifetimes work in ASP.NET Core?",
+  "What is your approach to building and versioning REST APIs in .NET?",
+  "How do you use Entity Framework Core effectively, and how do you avoid issues such as N+1 queries or poor tracking performance?",
+  "When would you choose Dapper over Entity Framework, and why?",
+  "How do async and await work in C#, and what common mistakes do teams make with asynchronous code?",
+  "How do you design background processing in .NET using hosted services, queues, or workers?",
+  "What practices do you use to secure .NET applications, including authentication, authorization, and secret management?",
+  "How do you write unit and integration tests for .NET services, and what role do tools like xUnit, NUnit, or Moq play?",
+  "How do you approach logging, observability, and distributed tracing in a .NET system?",
+  "What strategies do you use for configuration management across local, staging, and production environments?",
+  "How do you containerize and deploy .NET applications using Docker and Kubernetes?",
+  "How do you optimize performance in ASP.NET Core applications under high load?",
+  "What is your experience with Azure services such as App Service, Functions, Service Bus, or Azure SQL in a .NET solution?",
+  "How do you manage database migrations and schema evolution in Entity Framework Core?",
+  "How do you handle exception management and global error handling in ASP.NET Core?",
+  "What patterns do you prefer for clean architecture or domain-driven design in .NET systems?",
+  "Describe a production issue in a .NET application that you investigated and resolved.",
+];
+
+const DEVOPS_TECHNICAL_QUESTIONS = [
+  "How do you design a CI/CD pipeline that is fast, reliable, and safe for production deployments?",
+  "What branching and release strategies have you used, and how did they affect deployment frequency and stability?",
+  "How do you containerize applications with Docker, and what common mistakes do you watch for in Dockerfiles?",
+  "How do you manage Kubernetes workloads, configuration, and secrets across environments?",
+  "What is your approach to infrastructure as code, and how have you used tools like Terraform, Bicep, or CloudFormation?",
+  "How do you implement observability across logs, metrics, traces, and alerting?",
+  "What SRE-style reliability practices do you use, such as SLIs, SLOs, and error budgets?",
+  "How do you secure a delivery pipeline, including artifact integrity, secrets management, and least-privilege access?",
+  "How do you design rollback and disaster-recovery strategies for critical systems?",
+  "What is your experience with blue-green, canary, or rolling deployment strategies?",
+  "How do you automate environment provisioning for development, staging, and production?",
+  "How do you monitor cost and resource utilization in cloud-native environments?",
+  "How do you troubleshoot a failing deployment where the application works locally but not in the target environment?",
+  "What is your experience with Jenkins, GitHub Actions, Azure DevOps, or GitLab CI, and how do you choose between them?",
+  "How do you manage artifact repositories, build caching, and dependency security scanning?",
+  "How do you implement policy enforcement and compliance checks in a DevOps workflow?",
+  "How do you handle database changes safely as part of CI/CD?",
+  "What is your approach to incident response and postmortems after production outages?",
+  "How do you tune Kubernetes autoscaling, health probes, and resource requests for stable workloads?",
+  "Describe a DevOps improvement you introduced that significantly reduced lead time or production risk.",
+];
+
+const SOFTWARE_ENGINEER_TECHNICAL_QUESTIONS = [
+  "How do you approach designing a scalable backend or full-stack system for growth in both traffic and features?",
+  "What is your strategy for writing clean, maintainable code in a fast-moving team?",
+  "How do you choose the right data structure or algorithm for a production problem rather than a textbook exercise?",
+  "How do you design APIs that are easy to evolve without breaking consumers?",
+  "How do you approach database schema design, indexing, and query optimization?",
+  "What is your process for debugging a difficult production issue across multiple services?",
+  "How do you balance delivery speed with code quality, testing, and long-term maintainability?",
+  "What role should automated testing play across unit, integration, and end-to-end levels?",
+  "How do you think about observability, logging, and alerting when building a new service?",
+  "What are the most important considerations when securing a modern web application?",
+  "How do you review technical trade-offs when choosing between monolith and microservice architectures?",
+  "How do you keep systems resilient when downstream services fail or slow down?",
+  "What is your experience with asynchronous processing using queues, workers, or event-driven architecture?",
+  "How do you optimize application performance at the code, database, and infrastructure levels?",
+  "How do CI/CD and release automation influence software quality and team velocity?",
+  "How would you evaluate a candidate architecture for a new feature that includes frontend, backend, database, and deployment concerns?",
+  "Describe a time you improved developer experience or engineering productivity on a team.",
+  "How do you mentor junior engineers while still maintaining delivery momentum?",
+  "What does good ownership look like when a feature spans application code, cloud infrastructure, and operations?",
+  "Tell me about a complex technical decision you made and how you justified it to the team.",
+];
+
+function buildInterviewQuestionSet(technicalQuestions: string[]): string[] {
+  return [...GENERAL_OPENING_QUESTIONS, ...technicalQuestions];
+}
 
 export const ROLE_BASED_QUESTIONS: Record<string, string[]> = {
-  "Generative AI Engineer": GEN_AI_QUESTIONS,
-  "Gen AI Engineer": GEN_AI_QUESTIONS,
-  "React Engineer": REACT_QUESTIONS,
-  "Java Engineer": JAVA_QUESTIONS,
-  "Software Engineer": GEN_AI_QUESTIONS, // Default to Gen AI if not specified
+  "Generative AI Engineer": buildInterviewQuestionSet(GEN_AI_TECHNICAL_QUESTIONS),
+  "Gen AI Engineer": buildInterviewQuestionSet(GEN_AI_TECHNICAL_QUESTIONS),
+  "React Engineer": buildInterviewQuestionSet(REACT_TECHNICAL_QUESTIONS),
+  "Java Engineer": buildInterviewQuestionSet(JAVA_TECHNICAL_QUESTIONS),
+  "Java Developer": buildInterviewQuestionSet(JAVA_TECHNICAL_QUESTIONS),
+  ".NET Developer": buildInterviewQuestionSet(DOTNET_TECHNICAL_QUESTIONS),
+  "DevOps Engineer": buildInterviewQuestionSet(DEVOPS_TECHNICAL_QUESTIONS),
+  "Software Engineer": buildInterviewQuestionSet(SOFTWARE_ENGINEER_TECHNICAL_QUESTIONS),
 };
 
-export const PREDEFINED_QUESTIONS = GEN_AI_QUESTIONS; 
+export function getQuestionListForRole(role: string, questionBank?: string): string[] {
+  const questionBankText =
+    typeof questionBank === "string"
+      ? questionBank
+      : Array.isArray(questionBank)
+        ? questionBank.join("\n")
+        : "";
+
+  const customQuestions = questionBankText
+    .split(/\r?\n/)
+    .map((question) => question.trim())
+    .filter(Boolean);
+
+  if (customQuestions.length > 0) {
+    return [...GENERAL_OPENING_QUESTIONS, ...customQuestions];
+  }
+
+  return ROLE_BASED_QUESTIONS[role] || ROLE_BASED_QUESTIONS["Software Engineer"];
+}
+
+export const PREDEFINED_QUESTIONS = ROLE_BASED_QUESTIONS["Software Engineer"];
 export const FALLBACK_QUESTIONS = PREDEFINED_QUESTIONS;

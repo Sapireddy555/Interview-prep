@@ -4,7 +4,7 @@
 import { useSearchParams } from "next/navigation";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot } from "@/app/actions";
-import { ROLE_BASED_QUESTIONS, FALLBACK_QUESTIONS } from "@/lib/interview-constants";
+import { getQuestionListForRole } from "@/lib/interview-constants";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MicOff, Volume2, VolumeX, Loader2, ChevronRight } from "lucide-react";
@@ -64,7 +64,7 @@ export function InterviewView() {
   const [showNextButton, setShowNextButton] = useState(false);
 
   const totalQuestionCount =
-    questionListState.length || (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS).length;
+    questionListState.length || getQuestionListForRole(settings?.role || "", settings?.questionBank).length;
 
   const formattedRemainingTime = `${Math.floor(remainingSeconds / 60)
     .toString()
@@ -364,10 +364,12 @@ export function InterviewView() {
       interviewStartTime.current = new Date();
       
       setIsLoading(true);
-      const baseList = ROLE_BASED_QUESTIONS[role] || FALLBACK_QUESTIONS;
-      const shuffled = shuffleArray(baseList);
-      setQuestionListState(shuffled);
-      const firstQuestion = shuffled[0] || baseList[0];
+      const questionList = getQuestionListForRole(role, searchParams.get("questionBank") || "");
+      const openingQuestions = questionList.slice(0, 2);
+      const technicalQuestions = shuffleArray(questionList.slice(2));
+      const orderedQuestionList = [...openingQuestions, ...technicalQuestions];
+      setQuestionListState(orderedQuestionList);
+      const firstQuestion = orderedQuestionList[0] ?? "Tell me about yourself.";
       const firstMessage: Message = { id: Date.now().toString(), role: "ai", content: firstQuestion };
       setMessages([firstMessage]);
       
@@ -391,7 +393,10 @@ export function InterviewView() {
 
   const handleNextQuestion = () => {
     const nextIndex = currentQuestionIndex + 1;
-    const questionList = questionListState.length ? questionListState : (ROLE_BASED_QUESTIONS[settings?.role || ""] || FALLBACK_QUESTIONS);
+    const questionList =
+      questionListState.length
+        ? questionListState
+        : getQuestionListForRole(settings?.role || "", settings?.questionBank);
 
     if (nextIndex < questionList.length) {
       const nextQuestion = questionList[nextIndex];

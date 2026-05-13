@@ -4,7 +4,7 @@ import { verifyAadharWithADI } from "@/lib/azure-id-verify";
 import { analyzeFrameWithAzure } from "@/lib/azure-vision-proctor";
 import { z } from "zod";
 import { db } from "@/lib/db";
-import { FALLBACK_QUESTIONS, ROLE_BASED_QUESTIONS } from "@/lib/interview-constants";
+import { getQuestionListForRole } from "@/lib/interview-constants";
 import type { ReviewerScorecard } from "@/lib/types";
 
 export async function processInterviewTurn(input: {
@@ -15,7 +15,7 @@ export async function processInterviewTurn(input: {
   userResponse: string
 }) {
   // Intentional: no AI usage. We only use AI for final post-interview feedback.
-  const questionList = getQuestionList(input.role, input.questionBank);
+  const questionList = getQuestionListForRole(input.role, input.questionBank);
   const askedCount = (input.transcript || []).filter(m => m.role === "ai").length;
   const nextQuestion = questionList[askedCount] ?? "The interview is now complete. Thank you for your time.";
   const isComplete = askedCount >= questionList.length;
@@ -34,7 +34,7 @@ export async function processInterviewTurn(input: {
 
 export async function getInitialQuestion(input: { role: string, difficulty: string, questionBank?: string }) {
   // Intentional: no AI usage. We only use AI for final post-interview feedback.
-  const questionList = getQuestionList(input.role, input.questionBank);
+  const questionList = getQuestionListForRole(input.role, input.questionBank);
   const nextQuestion = questionList[0] ?? "Please introduce yourself.";
 
   return {
@@ -47,23 +47,6 @@ export async function getInitialQuestion(input: { role: string, difficulty: stri
       isComplete: questionList.length <= 1,
     }
   };
-}
-
-function getQuestionList(role: string, questionBank?: string): string[] {
-  const questionBankText =
-    typeof questionBank === "string"
-      ? questionBank
-      : Array.isArray(questionBank)
-        ? questionBank.join("\n")
-        : "";
-
-  const fromBank = questionBankText
-    .split(/\r?\n/)
-    .map(s => s.trim())
-    .filter(Boolean);
-
-  if (fromBank.length) return fromBank;
-  return ROLE_BASED_QUESTIONS[role] || FALLBACK_QUESTIONS;
 }
 
 // Firebase imports commented out - using local implementations
