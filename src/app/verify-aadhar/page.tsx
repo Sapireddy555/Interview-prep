@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Camera } from "lucide-react";
-import { validateAadharAction, createInterviewSession } from "@/app/actions";
+import { validateAadharAction, createInterviewSession, getCandidate } from "@/app/actions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { getMockCandidate } from "@/lib/mock-db";
 
@@ -31,6 +31,9 @@ function VerifyAadharContent() {
   const [scanAttempts, setScanAttempts] = useState(0);
   const [uniqueId, setUniqueId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState("live-scan");
+  const [candidateName, setCandidateName] = useState("Candidate");
+  const [showBestWishPopup, setShowBestWishPopup] = useState(false);
+  const [isRedirectingToInterview, setIsRedirectingToInterview] = useState(false);
 
   const MAX_SCAN_ATTEMPTS = 10;
 
@@ -66,6 +69,35 @@ function VerifyAadharContent() {
       }
     };
   }, [router, searchParams, activeTab]);
+
+  useEffect(() => {
+    if (!uniqueId) return;
+
+    let isCancelled = false;
+
+    async function loadCandidateName() {
+      try {
+        const candidate = await getCandidate(uniqueId);
+        if (!isCancelled && candidate?.name) {
+          setCandidateName(candidate.name);
+          return;
+        }
+      } catch (error) {
+        console.error("Failed to load candidate from DB:", error);
+      }
+
+      const mockCandidate = getMockCandidate(uniqueId);
+      if (!isCancelled) {
+        setCandidateName(mockCandidate?.name || "Candidate");
+      }
+    }
+
+    void loadCandidateName();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [uniqueId]);
 
   // Auto-Capture Loop
   useEffect(() => {
@@ -166,8 +198,26 @@ function VerifyAadharContent() {
 
   const proceedToInterview = async () => {
     if (!uniqueId) return;
-    const candidate = getMockCandidate(uniqueId);
-    if (!candidate) return;
+    if (isRedirectingToInterview) return;
+
+    setIsRedirectingToInterview(true);
+
+    let candidate = null;
+
+    try {
+      candidate = await getCandidate(uniqueId);
+    } catch (error) {
+      console.error("Failed to fetch candidate from DB:", error);
+    }
+
+    candidate = candidate || getMockCandidate(uniqueId);
+    if (!candidate) {
+      setIsRedirectingToInterview(false);
+      return;
+    }
+
+    const displayName = candidate.name || candidateName || "Candidate";
+    setCandidateName(displayName);
 
     const sessionResult = await createInterviewSession({
       role: candidate.role,
@@ -180,10 +230,17 @@ function VerifyAadharContent() {
         role: candidate.role,
         difficulty: candidate.difficulty,
         interviewId: sessionResult.id,
+        candidateName: displayName,
       });
       if (candidate.topics) params.append("topics", candidate.topics.join(","));
-      router.push(`/interview?${params.toString()}`);
+      setShowBestWishPopup(true);
+      window.setTimeout(() => {
+        router.push(`/interview?${params.toString()}`);
+      }, 5000);
+      return;
     }
+
+    setIsRedirectingToInterview(false);
   };
 
   return (
@@ -259,10 +316,10 @@ function VerifyAadharContent() {
                         </Button>
                       ) : (
                         <div className="flex gap-3">
-                          <Button size="lg" className="flex-1 shadow-lg" onClick={() => { setScanAttempts(0); setIsScanning(true); }}>
-                            <Scan className="mr-2 h-5 w-5" /> Start Auto-Scan
-                          </Button>
-                          <Button variant="secondary" size="lg" onClick={() => handleCaptureAndVerify()} disabled={isCapturing}>
+                        <Button size="lg" className="flex-1 shadow-lg" onClick={() => { setScanAttempts(0); setIsScanning(true); }} disabled={isRedirectingToInterview}>
+                          <Scan className="mr-2 h-5 w-5" /> Start Auto-Scan
+                        </Button>
+                          <Button variant="secondary" size="lg" onClick={() => handleCaptureAndVerify()} disabled={isCapturing || isRedirectingToInterview}>
                              {isCapturing ? <Loader2 className="animate-spin h-5 w-5" /> : <Camera className="h-5 w-5" />}
                           </Button>
                         </div>
@@ -331,17 +388,30 @@ function VerifyAadharContent() {
                 </div>
              </div>
              <div className="flex items-center gap-4">
-               <Button variant="ghost" size="sm" onClick={() => {
+               <Button variant="ghost" size="sm" disabled={isRedirectingToInterview} onClick={() => {
                  if (confirm('Skip identity verification and continue to the interview?')) {
-                   proceedToInterview();
+                   void proceedToInterview();
                  }
                }}>
-                 Skip Verification
+                 {isRedirectingToInterview ? "Starting Interview..." : "Skip Verification"}
                </Button>
              </div>
           </CardFooter>
         </Card>
       </div>
+      {showBestWishPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4">
+          <div className="w-full max-w-md rounded-[2rem] bg-white px-8 py-10 text-center shadow-2xl">
+            <p className="text-xs font-black uppercase tracking-[0.35em] text-primary">Interview Ready</p>
+            <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-900">
+              All the Best {candidateName}
+            </h2>
+            <p className="mt-3 text-sm text-slate-500">
+              Your interview will begin automatically in a few seconds.
+            </p>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

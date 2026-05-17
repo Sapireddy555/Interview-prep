@@ -42,6 +42,12 @@ export function InterviewView() {
   const proctorVideoRef = useRef<HTMLVideoElement>(null);
   const timerRef = useRef<number | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const autoCloseTimeoutRef = useRef<number | null>(null);
+
+  const closeInterviewWindow = useCallback(() => {
+    window.open("", "_self");
+    window.close();
+  }, []);
 
   const getRelativeTimestamp = useCallback(() => {
     if (!interviewStartTime.current) return new Date().toISOString();
@@ -290,6 +296,21 @@ export function InterviewView() {
     }
   }, [isCompleted, messages, remainingSeconds]);
 
+  useEffect(() => {
+    if (!isCompleted) return;
+
+    autoCloseTimeoutRef.current = window.setTimeout(() => {
+      closeInterviewWindow();
+    }, 5000);
+
+    return () => {
+      if (autoCloseTimeoutRef.current) {
+        clearTimeout(autoCloseTimeoutRef.current);
+        autoCloseTimeoutRef.current = null;
+      }
+    };
+  }, [closeInterviewWindow, isCompleted]);
+
   const startControlledRecording = () => {
     if (!audioStream || !interviewId) return;
     try {
@@ -476,12 +497,12 @@ export function InterviewView() {
            <div className="pt-8 w-full">
               <Button 
                 size="lg" 
-                onClick={() => window.close()} 
+                onClick={closeInterviewWindow} 
                 className="w-full h-16 text-xl font-bold rounded-2xl shadow-xl bg-slate-900 hover:bg-slate-800 transition-all active:scale-95"
               >
                 Close Interview
               </Button>
-              <p className="mt-4 text-xs text-slate-400 font-medium">You can now safely close this tab or window.</p>
+              <p className="mt-4 text-xs text-slate-400 font-medium">This window will close automatically in 5 seconds.</p>
            </div>
         </div>
       </div>
