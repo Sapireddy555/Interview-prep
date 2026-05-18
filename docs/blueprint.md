@@ -19,7 +19,7 @@
 - Proctoring: implemented via Azure Vision (optional; mock/no-op when missing credentials).
 - Reporting:
   - Post-interview report generation: implemented and stored in Postgres.
-  - Markdown export to Azure Blob: implemented (optional).
+  - HTML export to Azure Blob: implemented (optional).
 - Dashboards (candidate + HR): implemented (reads from Postgres).
 - Question bank:
   - Current implementation: user pastes questions as text (one per line).

@@ -25,7 +25,7 @@ Key actions:
 - `fetchInterviewSession(id)`: reads one session for report view.
 - `processInterviewTurn(...)`: calls the AI to produce the next question + scoring metadata.
 - `checkProctoring(...)`: runs an Azure Vision proctoring check (optional).
-- `generateAndSaveSummaryReport(interviewId)`: runs full interview analysis and stores it + exports Markdown to Azure Blob (optional).
+- `generateAndSaveSummaryReport(interviewId)`: runs full interview analysis and stores it + exports HTML to Azure Blob (optional).
 - `uploadRecordingChunk(formData)`: appends audio/video recording chunks to Azure Blob (optional).
 - `validateAadharAction(...)`: calls Azure Document Intelligence to verify ID (optional).
 
@@ -36,7 +36,7 @@ Key actions:
   - Input: role, difficulty, transcript, userResponse, optional questionBank
   - Output: nextQuestion + minimal internal feedback/suggestions + score + isComplete
 - Post-interview analysis: `src/ai/flows/full-interview-analysis.ts`
-  - Output is stored in Postgres `sessions.summary_report` and can be exported as Markdown.
+  - Output is stored in Postgres `sessions.summary_report` and can be exported as HTML.
 
 AI credentials:
 - `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` must be set for AI flows.
@@ -138,7 +138,7 @@ Implementation:
   - Loads the session from Postgres
   - Calls `analyzeFullInterview(...)` to produce a structured report
   - Stores it in Postgres `sessions.summary_report`
-  - Optionally exports a Markdown report to Azure Blob Storage
+  - Optionally exports an HTML report to Azure Blob Storage
 
 ### 6) Review dashboards
 
@@ -160,4 +160,3 @@ Implementation:
 - Cost control: prompts constrain output fields and encourage short per-turn feedback to reduce tokens.
 - Feature gating: Azure services are optional; missing credentials should not break dev flows (except STT token).
 - Data sensitivity: transcripts and ID images can contain sensitive information; store and retain only what is required by policy.
-

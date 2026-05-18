@@ -56,7 +56,9 @@ import type { InterviewSession } from "@/lib/types";
 
 // Deprecated actions removed
 
-export async function createInterviewSession(session: Omit<InterviewSession, 'id' | 'date' | 'feedback' | 'transcript' | 'summaryReport' | 'violations'>) {
+export async function createInterviewSession(
+  session: Omit<InterviewSession, 'id' | 'date' | 'feedback' | 'transcript' | 'summaryReport' | 'violations'> & { id?: string }
+) {
     const localId = `interview_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     console.log('Creating interview session with ID:', localId);
     
@@ -203,7 +205,7 @@ export async function generateAndSaveSummaryReport(interviewId: string) {
         [JSON.stringify(report), report.overallScore ?? 0, interviewId]
     );
 
-    // Export to Azure Storage as Markdown
+    // Export the generated HTML report to Azure Storage.
     await uploadReportToAzure(interviewId, report, session);
 
     return { success: true, data: report };
@@ -262,14 +264,14 @@ async function uploadReportToAzure(interviewId: string, report: any, session: an
             await containerClient.createIfNotExists();
         }
 
-        const reportContent = formatReportToMarkdown(interviewId, report, session);
-        const blockBlobClient = containerClient.getBlockBlobClient(`report_${interviewId}.md`);
+        const reportContent = Buffer.from(report.htmlReport || formatReportToHtml(interviewId, report, session), "utf8");
+        const blockBlobClient = containerClient.getBlockBlobClient(`report_${interviewId}.html`);
         
-        await blockBlobClient.upload(reportContent, reportContent.length, {
-            blobHTTPHeaders: { blobContentType: "text/markdown" }
+        await blockBlobClient.uploadData(reportContent, {
+            blobHTTPHeaders: { blobContentType: "text/html; charset=utf-8" }
         });
 
-        console.log(`Successfully uploaded report for ${interviewId} to Azure Storage.`);
+        console.log(`Successfully uploaded HTML report for ${interviewId} to Azure Storage.`);
     } catch (error) {
         console.error("Failed to upload report to Azure:", error);
     }

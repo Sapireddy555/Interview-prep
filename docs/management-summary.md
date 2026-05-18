@@ -22,7 +22,7 @@ This is a management-ready overview of what the team built, how it works at a hi
   - Dashboards and review pages are backed by the same persistent data source.
 - Reporting
   - Generates a structured post-interview report after completion (overall score, strengths, weaknesses, per-question notes).
-  - Can export a Markdown report to Azure Blob Storage when configured.
+  - Can export an HTML report to Azure Blob Storage when configured.
 - Review and dashboards
   - Candidate dashboard: performance over time and recent sessions.
   - Review page: list of past interviews and “View Report”.
@@ -61,4 +61,3 @@ This is a management-ready overview of what the team built, how it works at a hi
   - define role-based access (candidate vs HR) and audit logging
 - Firebase decision:
   - if Firebase must be re-enabled, plan it as a migration project (dual-write/backfill, acceptance criteria)
-

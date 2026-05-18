@@ -7,7 +7,7 @@ This repo originally started from a Firebase Studio template, but **Firebase is 
 - Firebase client SDK: not installed in `package.json`.
 - Firebase runtime wiring: stubbed/disabled in code.
 - Primary persistence: Postgres (sessions, transcripts, feedback, summary reports).
-- Optional exports: Azure Blob Storage for recordings + Markdown versions of reports.
+- Optional exports: Azure Blob Storage for recordings + HTML versions of reports.
 
 ## What was changed (technical)
 
@@ -65,4 +65,3 @@ If you decide to move back to Firebase/Firestore, treat it as a deliberate migra
    - Dual-write for a period, then cut over.
 
 Recommended approach for management: timebox this as a project with clear acceptance criteria (data parity, dashboard correctness, rollback plan).
-

@@ -216,7 +216,7 @@ function getTechnicalQuestionPool(role: string): string[] {
   return technicalQuestionsByRole[role] || technicalQuestionsByRole["Software Engineer"];
 }
 
-function normalizeQuestionBank(questionBank?: string): string[] {
+function normalizeQuestionBank(questionBank?: string | string[]): string[] {
   const questionBankText =
     typeof questionBank === "string"
       ? questionBank
@@ -226,11 +226,11 @@ function normalizeQuestionBank(questionBank?: string): string[] {
 
   return questionBankText
     .split(/\r?\n/)
-    .map((question) => question.trim())
+    .map((question: string) => question.trim())
     .filter(Boolean);
 }
 
-export function getInterviewQuestionSetForRole(role: string, questionBank?: string): InterviewQuestion[] {
+export function getInterviewQuestionSetForRole(role: string, questionBank?: string | string[]): InterviewQuestion[] {
   const customQuestions = normalizeQuestionBank(questionBank);
   const technicalQuestions =
     customQuestions.length > 0
@@ -244,7 +244,7 @@ export function getInterviewQuestionSetForRole(role: string, questionBank?: stri
   ];
 }
 
-export function getQuestionListForRole(role: string, questionBank?: string): string[] {
+export function getQuestionListForRole(role: string, questionBank?: string | string[]): string[] {
   return getInterviewQuestionSetForRole(role, questionBank).map((question) => question.prompt);
 }
 

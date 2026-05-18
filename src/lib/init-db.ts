@@ -40,9 +40,6 @@ const schema = `
 `;
 
 const seedData = [
-import { db } from './db';
-
-const seedData = [
   {
     id: "cand-se-001",
     role: "Generative AI Engineer",

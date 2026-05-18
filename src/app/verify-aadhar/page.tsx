@@ -74,10 +74,11 @@ function VerifyAadharContent() {
     if (!uniqueId) return;
 
     let isCancelled = false;
+    const candidateId = uniqueId;
 
     async function loadCandidateName() {
       try {
-        const candidate = await getCandidate(uniqueId);
+        const candidate = await getCandidate(candidateId);
         if (!isCancelled && candidate?.name) {
           setCandidateName(candidate.name);
           return;
@@ -86,7 +87,7 @@ function VerifyAadharContent() {
         console.error("Failed to load candidate from DB:", error);
       }
 
-      const mockCandidate = getMockCandidate(uniqueId);
+      const mockCandidate = getMockCandidate(candidateId);
       if (!isCancelled) {
         setCandidateName(mockCandidate?.name || "Candidate");
       }

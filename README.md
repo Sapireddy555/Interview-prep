@@ -9,7 +9,7 @@ ProPrep AI is a Next.js app for running AI-assisted mock interviews (voice + tex
 - Key integrations:
   - AI: Genkit + Gemini (Google AI) for question generation and analysis.
   - Persistence: Postgres (via `pg`) for sessions, transcripts, feedback, and summary reports.
-  - Optional Azure services: Speech (STT token), Vision (proctoring signals), Blob Storage (recordings + exported Markdown reports).
+  - Optional Azure services: Speech (STT token), Vision (proctoring signals), Blob Storage (recordings + exported HTML reports).
 
 ## Architecture at a glance
 
@@ -36,7 +36,7 @@ Optional (feature-gated; code falls back to mock/no-op when missing):
 - `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION` (speech-to-text token endpoint)
 - `AZURE_VISION_ENDPOINT`, `AZURE_VISION_KEY` (proctoring checks)
 - `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`, `AZURE_DOCUMENT_INTELLIGENCE_KEY` (Aadhar/ID verification)
-- `AZURE_STORAGE_CONNECTION_STRING` or `AZURE_STORAGE_SAS_URL` (recordings + Markdown report export)
+- `AZURE_STORAGE_CONNECTION_STRING` or `AZURE_STORAGE_SAS_URL` (recordings + HTML report export)
 
 ### Commands
 
