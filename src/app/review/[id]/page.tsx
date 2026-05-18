@@ -107,6 +107,12 @@ export default function ReportPage() {
           </div>
           <div className="ml-auto flex gap-2">
             <Button variant="outline" size="sm" asChild>
+              <a href={`/api/review-packet/${id}?format=html`}>
+                <FileDown className="h-4 w-4 mr-2" />
+                Packet HTML
+              </a>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
               <a href={`/api/review-packet/${id}?format=json`}>
                 <FileDown className="h-4 w-4 mr-2" />
                 Packet JSON
@@ -166,11 +172,14 @@ export default function ReportPage() {
                     </div>
 
                     <div>
-                      <h3 className="flex items-center font-semibold mb-2 text-lg">
+                      <h3 className="flex items-center font-semibold mb-3 text-lg">
                         <Star className="mr-2 h-5 w-5 text-primary" />
-                        Executive Summary
+                        Recruiter-Friendly HTML Assessment
                       </h3>
-                      <p className="text-muted-foreground prose prose-sm max-w-none">{session.summaryReport.summary}</p>
+                      <div
+                        className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm"
+                        dangerouslySetInnerHTML={{ __html: session.summaryReport.htmlReport }}
+                      />
                     </div>
 
                     <Separator />

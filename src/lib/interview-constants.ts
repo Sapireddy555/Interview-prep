@@ -1,9 +1,44 @@
-export const GENERAL_OPENING_QUESTIONS = [
+export type InterviewSectionId = "communication" | "technical" | "resume_projects";
+
+export type InterviewQuestion = {
+  id: string;
+  sectionId: InterviewSectionId;
+  sectionTitle: string;
+  prompt: string;
+};
+
+type ResumeProject = {
+  name: string;
+  company: string;
+  period?: string;
+  summary: string;
+};
+
+export const INTERVIEW_SECTION_TITLES: Record<InterviewSectionId, string> = {
+  communication: "Communication and Attitude",
+  technical: "Technical Questions",
+  resume_projects: "Resume Projects",
+};
+
+export const COMMUNICATION_AND_ATTITUDE_QUESTIONS = [
   "Tell me about yourself and walk me through the experience that has prepared you for this role.",
   "Why are you interested in this role, and what kind of impact are you hoping to make in your next position?",
+  "Describe a situation where you received difficult feedback. How did you respond, and what changed afterward?",
+  "When a project gets stressful or ambiguous, how do you keep your attitude constructive and your communication clear with the team?",
 ];
 
-const TOTAL_INTERVIEW_QUESTIONS = 12;
+const TECHNICAL_QUESTION_COUNT = 5;
+const RESUME_PROJECT_QUESTION_COUNT = 3;
+
+const DEMO_RESUME_PROJECTS: ResumeProject[] = [
+  {
+    name: "Assessment and Interview Enablement Platform",
+    company: "ValueMomentum",
+    period: "2020 to present",
+    summary:
+      "A recruiter and candidate workflow platform involving interview orchestration, reviewer collaboration, and cloud-hosted supporting services.",
+  },
+];
 
 const GEN_AI_TECHNICAL_QUESTIONS = [
   "Can you explain the fundamental difference between encoder-only, decoder-only, and encoder-decoder architectures such as BERT, GPT, and T5?",
@@ -143,23 +178,45 @@ const SOFTWARE_ENGINEER_TECHNICAL_QUESTIONS = [
   "Tell me about a complex technical decision you made and how you justified it to the team.",
 ];
 
-function buildInterviewQuestionSet(technicalQuestions: string[]): string[] {
-  const technicalQuestionCount = Math.max(0, TOTAL_INTERVIEW_QUESTIONS - GENERAL_OPENING_QUESTIONS.length);
-  return [...GENERAL_OPENING_QUESTIONS, ...technicalQuestions.slice(0, technicalQuestionCount)];
+function createSectionQuestions(sectionId: InterviewSectionId, prompts: string[]): InterviewQuestion[] {
+  const sectionTitle = INTERVIEW_SECTION_TITLES[sectionId];
+  return prompts.map((prompt, index) => ({
+    id: `${sectionId}-${index + 1}`,
+    sectionId,
+    sectionTitle,
+    prompt,
+  }));
 }
 
-export const ROLE_BASED_QUESTIONS: Record<string, string[]> = {
-  "Generative AI Engineer": buildInterviewQuestionSet(GEN_AI_TECHNICAL_QUESTIONS),
-  "Gen AI Engineer": buildInterviewQuestionSet(GEN_AI_TECHNICAL_QUESTIONS),
-  "React Engineer": buildInterviewQuestionSet(REACT_TECHNICAL_QUESTIONS),
-  "Java Engineer": buildInterviewQuestionSet(JAVA_TECHNICAL_QUESTIONS),
-  "Java Developer": buildInterviewQuestionSet(JAVA_TECHNICAL_QUESTIONS),
-  ".NET Developer": buildInterviewQuestionSet(DOTNET_TECHNICAL_QUESTIONS),
-  "DevOps Engineer": buildInterviewQuestionSet(DEVOPS_TECHNICAL_QUESTIONS),
-  "Software Engineer": buildInterviewQuestionSet(SOFTWARE_ENGINEER_TECHNICAL_QUESTIONS),
-};
+function buildResumeProjectQuestions(projects: ResumeProject[]): string[] {
+  const resumeQuestions = projects.flatMap((project) => {
+    const periodText = project.period ? ` during ${project.period}` : "";
+    return [
+      `Your resume shows work on ${project.name} at ${project.company}${periodText}. Walk me through the business problem, your responsibilities, and the outcome.`,
+      `In ${project.name}, what was the toughest technical or delivery challenge you personally handled, and how did you resolve it?`,
+      `Looking back at ${project.name}, what trade-offs did you make, what would you improve now, and why?`,
+    ];
+  });
 
-export function getQuestionListForRole(role: string, questionBank?: string): string[] {
+  return resumeQuestions.slice(0, RESUME_PROJECT_QUESTION_COUNT);
+}
+
+function getTechnicalQuestionPool(role: string): string[] {
+  const technicalQuestionsByRole: Record<string, string[]> = {
+    "Generative AI Engineer": GEN_AI_TECHNICAL_QUESTIONS,
+    "Gen AI Engineer": GEN_AI_TECHNICAL_QUESTIONS,
+    "React Engineer": REACT_TECHNICAL_QUESTIONS,
+    "Java Engineer": JAVA_TECHNICAL_QUESTIONS,
+    "Java Developer": JAVA_TECHNICAL_QUESTIONS,
+    ".NET Developer": DOTNET_TECHNICAL_QUESTIONS,
+    "DevOps Engineer": DEVOPS_TECHNICAL_QUESTIONS,
+    "Software Engineer": SOFTWARE_ENGINEER_TECHNICAL_QUESTIONS,
+  };
+
+  return technicalQuestionsByRole[role] || technicalQuestionsByRole["Software Engineer"];
+}
+
+function normalizeQuestionBank(questionBank?: string): string[] {
   const questionBankText =
     typeof questionBank === "string"
       ? questionBank
@@ -167,18 +224,29 @@ export function getQuestionListForRole(role: string, questionBank?: string): str
         ? questionBank.join("\n")
         : "";
 
-  const customQuestions = questionBankText
+  return questionBankText
     .split(/\r?\n/)
     .map((question) => question.trim())
     .filter(Boolean);
-
-  if (customQuestions.length > 0) {
-    const technicalQuestionCount = Math.max(0, TOTAL_INTERVIEW_QUESTIONS - GENERAL_OPENING_QUESTIONS.length);
-    return [...GENERAL_OPENING_QUESTIONS, ...customQuestions.slice(0, technicalQuestionCount)];
-  }
-
-  return ROLE_BASED_QUESTIONS[role] || ROLE_BASED_QUESTIONS["Software Engineer"];
 }
 
-export const PREDEFINED_QUESTIONS = ROLE_BASED_QUESTIONS["Software Engineer"];
+export function getInterviewQuestionSetForRole(role: string, questionBank?: string): InterviewQuestion[] {
+  const customQuestions = normalizeQuestionBank(questionBank);
+  const technicalQuestions =
+    customQuestions.length > 0
+      ? customQuestions.slice(0, TECHNICAL_QUESTION_COUNT)
+      : getTechnicalQuestionPool(role).slice(0, TECHNICAL_QUESTION_COUNT);
+
+  return [
+    ...createSectionQuestions("communication", COMMUNICATION_AND_ATTITUDE_QUESTIONS),
+    ...createSectionQuestions("technical", technicalQuestions),
+    ...createSectionQuestions("resume_projects", buildResumeProjectQuestions(DEMO_RESUME_PROJECTS)),
+  ];
+}
+
+export function getQuestionListForRole(role: string, questionBank?: string): string[] {
+  return getInterviewQuestionSetForRole(role, questionBank).map((question) => question.prompt);
+}
+
+export const PREDEFINED_QUESTIONS = getQuestionListForRole("Software Engineer");
 export const FALLBACK_QUESTIONS = PREDEFINED_QUESTIONS;

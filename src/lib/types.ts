@@ -11,6 +11,8 @@ export type Message = {
   role: 'user' | 'ai';
   content: string;
   createdAt?: string;
+  sectionId?: 'communication' | 'technical' | 'resume_projects';
+  sectionTitle?: string;
 };
 
 export type Feedback = {
@@ -52,6 +54,15 @@ export type FullInterviewReport = {
   summary: string;
   strengths: string[];
   weaknesses: string[];
+  htmlReport: string;
+  sectionFeedback: Array<{
+    sectionId: 'communication' | 'technical' | 'resume_projects';
+    sectionTitle: string;
+    score: number;
+    summary: string;
+    strengths: string[];
+    improvements: string[];
+  }>;
   rubric: {
     competencies: Array<{
       name: string;
@@ -68,6 +79,7 @@ export type FullInterviewReport = {
   behavioralFeedback: string;
   questionFeedback: Array<{
     question: string;
+    sectionTitle: string;
     feedback: string;
     score: number;
     evidence: Array<{ quote: string; speaker: 'user' | 'ai' }>;

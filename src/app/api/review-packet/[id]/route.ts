@@ -106,6 +106,17 @@ export async function GET(request: Request, { params }: { params: { id: string }
     });
   }
 
+  if (format === "html") {
+    const html = session.summary_report?.htmlReport || "<div>No HTML report available.</div>";
+    return new NextResponse(html, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Disposition": `attachment; filename="review_packet_${id}.html"`,
+      },
+    });
+  }
+
   const payload = {
     id: session.id,
     role: session.role,

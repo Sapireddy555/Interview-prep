@@ -22,7 +22,7 @@ import { fetchInterviewSessions } from "../actions";
 import type { InterviewSession } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import Link from "next/link";
-import { Loader2, PlayCircle, ShieldAlert } from "lucide-react";
+import { Loader2, PlayCircle, ShieldAlert, UserCheck, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export default function HRDashboardPage() {
@@ -39,6 +39,15 @@ export default function HRDashboardPage() {
     }
     loadSessions();
   }, []);
+
+  const completedSessions = sessions.filter((session) => parseInt(session.duration, 10) > 0);
+  const reviewedSessions = completedSessions.filter((session) => session.summaryReport?.hiringRecommendation);
+  const recommendedForNextRound = reviewedSessions.filter(
+    (session) => session.summaryReport?.hiringRecommendation !== "No Hire"
+  ).length;
+  const rejectedCandidates = reviewedSessions.filter(
+    (session) => session.summaryReport?.hiringRecommendation === "No Hire"
+  ).length;
 
   if (loading) {
     return (
@@ -58,6 +67,33 @@ export default function HRDashboardPage() {
           <p className="text-muted-foreground">Monitor and review candidate mock interviews from the TAG Team.</p>
         </header>
 
+        <div className="grid gap-6 md:grid-cols-2">
+          <Card className="bg-gradient-to-br from-emerald-100 to-white">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Recommended For Next Round</CardTitle>
+              <UserCheck className="h-4 w-4 text-emerald-700" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-emerald-700">{recommendedForNextRound}</div>
+              <p className="text-xs text-muted-foreground">
+                Completed interviews with recommendation other than No Hire
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="bg-gradient-to-br from-rose-100 to-white">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Rejected</CardTitle>
+              <UserX className="h-4 w-4 text-rose-700" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-rose-700">{rejectedCandidates}</div>
+              <p className="text-xs text-muted-foreground">
+                Completed interviews marked No Hire
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+
         <Card>
           <CardHeader>
             <CardTitle>Recent Candidate Sessions</CardTitle>
@@ -71,6 +107,7 @@ export default function HRDashboardPage() {
                   <TableHead>Role</TableHead>
                   <TableHead>Date Completed</TableHead>
                   <TableHead>Score</TableHead>
+                  <TableHead>Recommendation</TableHead>
                   <TableHead>Proctoring</TableHead>
                   <TableHead className="text-right">Playback</TableHead>
                 </TableRow>
@@ -85,6 +122,15 @@ export default function HRDashboardPage() {
                       <Badge variant={s.score > 70 ? "default" : "secondary"}>
                         {s.score > 0 ? `${s.score}%` : 'Incomplete'}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {s.summaryReport?.hiringRecommendation ? (
+                        <Badge variant={s.summaryReport.hiringRecommendation === "No Hire" ? "destructive" : "default"}>
+                          {s.summaryReport.hiringRecommendation}
+                        </Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">Pending</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       {s.violations && s.violations.length > 0 ? (
@@ -106,7 +152,7 @@ export default function HRDashboardPage() {
                   </TableRow>
                 )) : (
                    <TableRow>
-                      <TableCell colSpan={6} className="h-24 text-center text-muted-foreground">
+                      <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
                         No sessions recorded yet. Waiting for candidates to use the unique links.
                       </TableCell>
                     </TableRow>

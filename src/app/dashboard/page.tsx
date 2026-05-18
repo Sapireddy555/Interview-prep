@@ -31,6 +31,8 @@ import {
   Target,
   Inbox,
   Loader2,
+  UserCheck,
+  UserX,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
@@ -62,6 +64,13 @@ export default function DashboardPage() {
 
   const totalInterviews = sessions.length;
   const completedSessions = sessions.filter(s => parseInt(s.duration, 10) > 0);
+  const reviewedSessions = completedSessions.filter((session) => session.summaryReport?.hiringRecommendation);
+  const recommendedForNextRound = reviewedSessions.filter(
+    (session) => session.summaryReport?.hiringRecommendation !== "No Hire"
+  ).length;
+  const rejectedCandidates = reviewedSessions.filter(
+    (session) => session.summaryReport?.hiringRecommendation === "No Hire"
+  ).length;
 
   const averageScore = completedSessions.length > 0
     ? completedSessions.reduce((sum, s) => sum + s.score, 0) / completedSessions.length
@@ -112,7 +121,7 @@ export default function DashboardPage() {
           </p>
         </header>
 
-        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-6">
           <Card className="relative overflow-hidden bg-gradient-to-br from-primary/20 to-secondary">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">
@@ -164,6 +173,34 @@ export default function DashboardPage() {
               <div className="text-2xl font-bold">{mostFrequentRole}</div>
               <p className="text-xs text-muted-foreground">
                 Based on your sessions
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="relative overflow-hidden bg-gradient-to-br from-emerald-100 to-white">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Next Round
+              </CardTitle>
+              <UserCheck className="h-4 w-4 text-emerald-700" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-emerald-700">{recommendedForNextRound}</div>
+              <p className="text-xs text-muted-foreground">
+                Reviewed candidates recommended forward
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="relative overflow-hidden bg-gradient-to-br from-rose-100 to-white">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Rejected
+              </CardTitle>
+              <UserX className="h-4 w-4 text-rose-700" />
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-rose-700">{rejectedCandidates}</div>
+              <p className="text-xs text-muted-foreground">
+                Reviewed candidates marked No Hire
               </p>
             </CardContent>
           </Card>

@@ -4,7 +4,8 @@
 import { useSearchParams } from "next/navigation";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot } from "@/app/actions";
-import { getQuestionListForRole } from "@/lib/interview-constants";
+import { getInterviewQuestionSetForRole, INTERVIEW_SECTION_TITLES } from "@/lib/interview-constants";
+import type { InterviewQuestion } from "@/lib/interview-constants";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
@@ -17,7 +18,7 @@ export function InterviewView() {
   const { toast } = useToast();
   const [settings, setSettings] = useState<InterviewSettings | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [questionListState, setQuestionListState] = useState<string[]>([]);
+  const [questionListState, setQuestionListState] = useState<InterviewQuestion[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
@@ -63,13 +64,43 @@ export function InterviewView() {
   }, [getRelativeTimestamp]);
 
   const totalQuestionCount =
-    questionListState.length || getQuestionListForRole(settings?.role || "", settings?.questionBank).length;
+    questionListState.length || getInterviewQuestionSetForRole(settings?.role || "", settings?.questionBank).length;
 
   const formattedRemainingTime = `${Math.floor(remainingSeconds / 3600)
     .toString()
     .padStart(2, "0")}:${Math.floor((remainingSeconds % 3600) / 60)
     .toString()
     .padStart(2, "0")}:${(remainingSeconds % 60).toString().padStart(2, "0")}`;
+
+  const currentQuestionMeta = questionListState[currentQuestionIndex];
+  const currentSectionTitle = currentQuestionMeta?.sectionTitle || INTERVIEW_SECTION_TITLES.communication;
+  const timerTone =
+    remainingSeconds <= 10 * 60
+      ? {
+          wrapper: "border-red-200 bg-red-50",
+          label: "text-red-700",
+          value: "text-red-700",
+        }
+      : remainingSeconds <= 30 * 60
+        ? {
+            wrapper: "border-amber-200 bg-amber-50",
+            label: "text-amber-700",
+            value: "text-amber-700",
+          }
+        : {
+            wrapper: "border-emerald-200 bg-emerald-50",
+            label: "text-emerald-700",
+            value: "text-emerald-700",
+          };
+
+  const sectionQuestionCounts = questionListState.reduce<Record<string, number>>((acc, question) => {
+    acc[question.sectionTitle] = (acc[question.sectionTitle] || 0) + 1;
+    return acc;
+  }, {});
+
+  const currentSectionQuestionNumber = questionListState
+    .slice(0, currentQuestionIndex + 1)
+    .filter((question) => question.sectionTitle === currentSectionTitle).length;
 
   const onFinalResult = useCallback((text: string) => {
     setDraftResponse(text.trim());
@@ -143,15 +174,6 @@ export function InterviewView() {
       }
     }
   }, [addSecurityEvent, getRelativeTimestamp, toast, interviewId]);
-
-  const shuffleArray = (arr: string[]) => {
-    const copy = arr.slice();
-    for (let i = copy.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [copy[i], copy[j]] = [copy[j], copy[i]];
-    }
-    return copy;
-  };
 
   const handleInterviewCompletion = async (msgs: Message[] = messages) => {
     setIsCompleted(true);
@@ -430,13 +452,17 @@ export function InterviewView() {
       interviewStartTime.current = new Date();
       
       setIsLoading(true);
-      const questionList = getQuestionListForRole(role, searchParams.get("questionBank") || "");
-      const openingQuestions = questionList.slice(0, 2);
-      const technicalQuestions = shuffleArray(questionList.slice(2));
-      const orderedQuestionList = [...openingQuestions, ...technicalQuestions];
+      const orderedQuestionList = getInterviewQuestionSetForRole(role, searchParams.get("questionBank") || "");
       setQuestionListState(orderedQuestionList);
-      const firstQuestion = orderedQuestionList[0] ?? "Tell me about yourself.";
-      const firstMessage: Message = { id: Date.now().toString(), role: "ai", content: firstQuestion };
+      setCurrentQuestionIndex(0);
+      const firstQuestion = orderedQuestionList[0];
+      const firstMessage: Message = {
+        id: Date.now().toString(),
+        role: "ai",
+        content: firstQuestion?.prompt ?? "Tell me about yourself.",
+        sectionId: firstQuestion?.sectionId,
+        sectionTitle: firstQuestion?.sectionTitle,
+      };
       setMessages([firstMessage]);
       setDraftResponse("");
       setRemainingSeconds(60 * 60);
@@ -454,11 +480,17 @@ export function InterviewView() {
     const questionList =
       questionListState.length
         ? questionListState
-        : getQuestionListForRole(settings?.role || "", settings?.questionBank);
+        : getInterviewQuestionSetForRole(settings?.role || "", settings?.questionBank);
 
     if (nextIndex < questionList.length) {
       const nextQuestion = questionList[nextIndex];
-      const aiMessage: Message = { id: Date.now().toString(), role: 'ai', content: nextQuestion };
+      const aiMessage: Message = {
+        id: Date.now().toString(),
+        role: 'ai',
+        content: nextQuestion.prompt,
+        sectionId: nextQuestion.sectionId,
+        sectionTitle: nextQuestion.sectionTitle,
+      };
       setMessages([...updatedMessages, aiMessage]);
       setCurrentQuestionIndex(nextIndex);
     } else {
@@ -527,9 +559,9 @@ export function InterviewView() {
                 {currentQuestionIndex + 1} / {totalQuestionCount}
               </p>
             </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm">
-              <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Timer</p>
-              <p className="font-mono text-xs font-semibold text-slate-900">{formattedRemainingTime}</p>
+            <div className={`rounded-2xl border px-2.5 py-1 text-sm transition-colors ${timerTone.wrapper}`}>
+              <p className={`text-[9px] font-bold uppercase tracking-[0.18em] ${timerTone.label}`}>Timer</p>
+              <p className={`font-mono text-xs font-semibold ${timerTone.value}`}>{formattedRemainingTime}</p>
             </div>
             <Button variant="destructive" className="h-8 rounded-2xl px-3 text-xs" onClick={() => handleInterviewCompletion(messages)}>
               End Interview
@@ -586,6 +618,14 @@ export function InterviewView() {
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">
                     Current Question - {String(currentQuestionIndex + 1).padStart(2, "0")}
                   </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] text-primary">
+                      {currentSectionTitle}
+                    </span>
+                    <span className="text-[10px] font-semibold text-slate-500">
+                      Section Progress {currentSectionQuestionNumber} / {sectionQuestionCounts[currentSectionTitle] || 0}
+                    </span>
+                  </div>
                   <p className="mt-1 text-[11px] font-semibold leading-4.5 text-slate-900 md:text-[0.82rem]">
                     {currentQuestion?.content}
                   </p>
@@ -598,6 +638,33 @@ export function InterviewView() {
 
             <div className="grid gap-2">
               <div className="flex flex-col gap-2">
+                <div className="rounded-[1.5rem] border border-slate-200 bg-white p-3 shadow-sm">
+                  <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Interview Sections</p>
+                  <div className="mt-2 space-y-2">
+                    {Object.entries(INTERVIEW_SECTION_TITLES).map(([sectionId, sectionTitle]) => {
+                      const completedCount = questionListState
+                        .slice(0, Math.max(0, currentQuestionIndex))
+                        .filter((question) => question.sectionId === sectionId).length;
+                      const totalCount = questionListState.filter((question) => question.sectionId === sectionId).length;
+                      const isActiveSection = currentSectionTitle === sectionTitle;
+
+                      return (
+                        <div
+                          key={sectionId}
+                          className={`rounded-2xl border px-3 py-2 text-xs transition-colors ${
+                            isActiveSection ? "border-primary/30 bg-primary/[0.05]" : "border-slate-200 bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <span className={`font-semibold ${isActiveSection ? "text-primary" : "text-slate-700"}`}>{sectionTitle}</span>
+                            <span className="font-mono text-slate-500">{Math.min(completedCount + (isActiveSection ? 1 : 0), totalCount)} / {totalCount}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
                 <div className="rounded-[1.5rem] border border-slate-200 bg-white p-3 shadow-sm">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Response Controls</p>
                   <div className="mt-2 grid gap-1.5">
