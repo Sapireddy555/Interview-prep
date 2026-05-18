@@ -40,6 +40,8 @@ Key actions:
 
 AI credentials:
 - `GEMINI_API_KEY` or `GOOGLE_GENAI_API_KEY` must be set for AI flows.
+- `AZURE_OPENAI_API_KEY` enables Azure OpenAI fallback for final report generation.
+- `AI_PRIMARY_PROVIDER=azure` makes Azure OpenAI the primary provider and Gemini the fallback.
 
 ### Persistence (Postgres via `pg`)
 

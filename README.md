@@ -39,6 +39,11 @@ Optional (feature-gated; code falls back to mock/no-op when missing):
 - `AZURE_STORAGE_CONNECTION_STRING` or `AZURE_STORAGE_SAS_URL` (recordings + HTML report export)
 - `AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING` or `AZURE_COMMUNICATION_CONNECTION_STRING` (ACS invitation email)
 - `AZURE_COMMUNICATION_EMAIL_SENDER` (verified ACS sender address)
+- `AZURE_OPENAI_API_KEY` (Azure OpenAI fallback/main provider)
+- `AZURE_OPENAI_ENDPOINT` (defaults to `https://azureopenai-backofficeapiservice.openai.azure.com/`)
+- `AZURE_OPENAI_DEPLOYMENT` (defaults to `chatbotdemo`)
+- `AZURE_OPENAI_API_VERSION` (defaults to `2024-10-21`)
+- `AI_PRIMARY_PROVIDER=azure` to use Azure OpenAI first; omit it to keep Gemini first with Azure fallback.
 
 ### Commands
 

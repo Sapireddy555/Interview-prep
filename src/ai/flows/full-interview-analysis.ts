@@ -2,6 +2,7 @@
 'use server';
 
 import { ai } from '@/ai/genkit';
+import { generateAzureOpenAIJson, isAzureOpenAIConfigured } from '@/lib/azure-openai';
 import { z } from 'genkit';
 
 const FullInterviewAnalysisInputSchema = z.object({
@@ -98,8 +99,107 @@ const analysisPrompt = ai.definePrompt({
   Format your final report as purely valid JSON matching the output schema.`,
 });
 
-export async function analyzeFullInterview(input: FullInterviewAnalysisInput): Promise<FullInterviewAnalysisOutput> {
+function buildTranscriptText(input: FullInterviewAnalysisInput) {
+  return input.transcript
+    .map((message) => `- ${message.role}${message.sectionTitle ? ` [${message.sectionTitle}]` : ''}: ${message.content}`)
+    .join('\n');
+}
+
+function buildAzureAnalysisPrompt(input: FullInterviewAnalysisInput) {
+  return `Role: ${input.role}
+
+TRANSCRIPT:
+${buildTranscriptText(input)}
+
+Return one JSON object with this exact shape:
+{
+  "overallScore": number,
+  "summary": string,
+  "strengths": string[],
+  "weaknesses": string[],
+  "htmlReport": "",
+  "sectionFeedback": [
+    {
+      "sectionId": "communication" | "technical" | "resume_projects",
+      "sectionTitle": string,
+      "score": number,
+      "summary": string,
+      "strengths": string[],
+      "improvements": string[]
+    }
+  ],
+  "rubric": {
+    "competencies": [
+      {
+        "name": "Problem Solving" | "Technical Depth" | "Communication" | "Clarity & Structure" | "Practicality" | "Collaboration" | "Ownership" | "Behavioral Signals",
+        "score": number,
+        "evidence": [
+          { "quote": string, "speaker": "user" | "ai", "whyItMatters": string }
+        ]
+      }
+    ],
+    "overallNotes": string
+  },
+  "technicalFeedback": string,
+  "behavioralFeedback": string,
+  "questionFeedback": [
+    {
+      "question": string,
+      "sectionTitle": string,
+      "feedback": string,
+      "score": number,
+      "evidence": [
+        { "quote": string, "speaker": "user" | "ai" }
+      ]
+    }
+  ],
+  "hiringRecommendation": "Strong Hire" | "Hire" | "Leaning Hire" | "No Hire"
+}
+
+Rules:
+- Return JSON only.
+- Set htmlReport to an empty string.
+- Score every question asked by the interviewer.
+- Include all three section IDs when enough transcript context exists.
+- Use concrete transcript evidence where possible.`;
+}
+
+async function analyzeWithGemini(input: FullInterviewAnalysisInput) {
   const { output } = await analysisPrompt(input);
-  if (!output) throw new Error("AI failed to generate a final analysis.");
+  if (!output) throw new Error("Gemini failed to generate a final analysis.");
   return output;
+}
+
+async function analyzeWithAzureOpenAI(input: FullInterviewAnalysisInput) {
+  const output = await generateAzureOpenAIJson<FullInterviewAnalysisOutput>({
+    system: "You are a Senior Principal Interviewer. You produce strict JSON only for structured interview evaluations.",
+    user: buildAzureAnalysisPrompt(input),
+    temperature: 0.2,
+  });
+
+  return FullInterviewAnalysisOutputSchema.parse(output);
+}
+
+export async function analyzeFullInterview(input: FullInterviewAnalysisInput): Promise<FullInterviewAnalysisOutput> {
+  const preferAzure = process.env.AI_PRIMARY_PROVIDER?.toLowerCase() === 'azure';
+  const providers = preferAzure
+    ? [analyzeWithAzureOpenAI, analyzeWithGemini]
+    : [analyzeWithGemini, analyzeWithAzureOpenAI];
+
+  let lastError: unknown;
+
+  for (const provider of providers) {
+    if (provider === analyzeWithAzureOpenAI && !isAzureOpenAIConfigured()) {
+      continue;
+    }
+
+    try {
+      return await provider(input);
+    } catch (error) {
+      lastError = error;
+      console.error("Interview analysis provider failed:", error);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("AI failed to generate a final analysis.");
 }
