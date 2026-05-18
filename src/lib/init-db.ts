@@ -3,9 +3,16 @@ import { db } from './db';
 const schema = `
   CREATE TABLE IF NOT EXISTS candidates (
     id TEXT PRIMARY KEY,
+    name TEXT,
+    email TEXT,
     role TEXT NOT NULL,
     difficulty TEXT NOT NULL,
-    topics JSONB DEFAULT '[]'
+    topics JSONB DEFAULT '[]',
+    resume_url TEXT,
+    resume_file_name TEXT,
+    job_description_url TEXT,
+    job_description_file_name TEXT,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -37,6 +44,13 @@ const schema = `
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS security_events JSONB DEFAULT '[]';
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS suspicion_score INT DEFAULT 0;
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reviewer_scorecard JSONB;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS name TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS email TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_url TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_file_name TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_url TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_file_name TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
 `;
 
 const seedData = [

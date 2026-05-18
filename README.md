@@ -37,6 +37,8 @@ Optional (feature-gated; code falls back to mock/no-op when missing):
 - `AZURE_VISION_ENDPOINT`, `AZURE_VISION_KEY` (proctoring checks)
 - `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`, `AZURE_DOCUMENT_INTELLIGENCE_KEY` (Aadhar/ID verification)
 - `AZURE_STORAGE_CONNECTION_STRING` or `AZURE_STORAGE_SAS_URL` (recordings + HTML report export)
+- `AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING` or `AZURE_COMMUNICATION_CONNECTION_STRING` (ACS invitation email)
+- `AZURE_COMMUNICATION_EMAIL_SENDER` (verified ACS sender address)
 
 ### Commands
 

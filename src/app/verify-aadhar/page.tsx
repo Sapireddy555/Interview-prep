@@ -221,6 +221,7 @@ function VerifyAadharContent() {
     setCandidateName(displayName);
 
     const sessionResult = await createInterviewSession({
+      id: uniqueId,
       role: candidate.role,
       score: 0,
       duration: "0",
@@ -233,7 +234,8 @@ function VerifyAadharContent() {
         interviewId: sessionResult.id,
         candidateName: displayName,
       });
-      if (candidate.topics) params.append("topics", candidate.topics.join(","));
+      const candidateTopics = Array.isArray(candidate.topics) ? candidate.topics : [];
+      if (candidateTopics.length) params.append("topics", candidateTopics.join(","));
       setShowBestWishPopup(true);
       window.setTimeout(() => {
         router.push(`/interview?${params.toString()}`);

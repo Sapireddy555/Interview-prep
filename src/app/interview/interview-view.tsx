@@ -35,7 +35,8 @@ export function InterviewView() {
   const interviewStartTime = useRef<Date | null>(null);
   const proctoringIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const chunkIndexRef = useRef<number>(0);
+  const fullInterviewRecorderRef = useRef<MediaRecorder | null>(null);
+  const fullRecordingChunkIndexRef = useRef<number>(0);
   const violationsRef = useRef<{ timestamp: string; message: string }[]>([]);
   const securityEventsRef = useRef<SecurityEvent[]>([]);
   const suspicionScoreRef = useRef<number>(0);
@@ -175,8 +176,59 @@ export function InterviewView() {
     }
   }, [addSecurityEvent, getRelativeTimestamp, toast, interviewId]);
 
+  const startFullInterviewRecording = useCallback((stream: MediaStream, id: string) => {
+    if (fullInterviewRecorderRef.current?.state === "recording") return;
+
+    try {
+      let recorder: MediaRecorder;
+      try {
+        recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp8,opus" });
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
+
+      fullRecordingChunkIndexRef.current = 0;
+      fullInterviewRecorderRef.current = recorder;
+
+      recorder.ondataavailable = async (event) => {
+        if (!event.data.size) return;
+
+        const formData = new FormData();
+        formData.append("interviewId", id);
+        formData.append("chunkIndex", String(fullRecordingChunkIndexRef.current));
+        formData.append("chunk", new File([event.data], `interview_${id}_${fullRecordingChunkIndexRef.current}.webm`, {
+          type: event.data.type || "video/webm",
+        }));
+        fullRecordingChunkIndexRef.current += 1;
+
+        try {
+          await uploadRecordingChunk(formData);
+        } catch (error) {
+          console.error("Full interview recording upload failed:", error);
+        }
+      };
+
+      recorder.start(10000);
+    } catch (error) {
+      console.error("Unable to start full interview recording:", error);
+      toast({
+        title: "Recording unavailable",
+        description: "The interview can continue, but the full recording could not be started.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
+
+  const stopFullInterviewRecording = useCallback(() => {
+    const recorder = fullInterviewRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      recorder.stop();
+    }
+  }, []);
+
   const handleInterviewCompletion = async (msgs: Message[] = messages) => {
     setIsCompleted(true);
+    stopFullInterviewRecording();
     if (!interviewId) return;
     try {
       const durationSeconds = interviewStartTime.current ? Math.max(0, Math.floor((Date.now() - interviewStartTime.current.getTime()) / 1000)) : 0;
@@ -200,6 +252,7 @@ export function InterviewView() {
   
 
   useEffect(() => {
+    isMountedRef.current = true;
     const id = searchParams.get("interviewId");
 
     const getCameraPermission = async () => {
@@ -217,6 +270,8 @@ export function InterviewView() {
         }
 
         if (id) {
+            startFullInterviewRecording(stream, id);
+
             // keep audio stream for controlled per-question recordings
             const tracks = stream.getAudioTracks();
             if (tracks.length > 0) {
@@ -290,8 +345,9 @@ export function InterviewView() {
         if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
           controlledRecorderRef.current.stop();
         }
+        stopFullInterviewRecording();
     }
-  }, [toast, runProctoring, searchParams]);
+  }, [toast, runProctoring, searchParams, startFullInterviewRecording, stopFullInterviewRecording]);
 
   useEffect(() => {
     if (!interviewId || isCompleted) return;
@@ -349,21 +405,6 @@ export function InterviewView() {
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) {
           recordedChunksRef.current.push(e.data);
-        }
-      };
-      recorder.onstop = async () => {
-        if (!interviewId) return;
-        const chunks = recordedChunksRef.current;
-        const blob = new Blob(chunks, { type: chunks[0]?.type || "audio/webm" });
-        const formData = new FormData();
-        formData.append('interviewId', interviewId);
-        formData.append('chunkIndex', chunkIndexRef.current.toString());
-        formData.append('chunk', new File([blob], `response_${currentQuestionIndex}.webm`, { type: blob.type }));
-        chunkIndexRef.current++;
-        try {
-          await uploadRecordingChunk(formData);
-        } catch (err) {
-          console.error('Upload error', err);
         }
       };
       recorder.start();
@@ -667,15 +708,15 @@ export function InterviewView() {
 
                 <div className="rounded-[1.5rem] border border-slate-200 bg-white p-3 shadow-sm">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Response Controls</p>
-                  <div className="mt-2 grid gap-1.5">
-                    <Button onClick={handleRecordToggle} disabled={!audioStream} className="h-9 rounded-2xl text-xs">
-                      {isRecordingControlled ? "Stop Recording" : "Record Answer"}
+                  <div className="mt-2 grid grid-cols-3 gap-1.5">
+                    <Button onClick={handleRecordToggle} disabled={!audioStream} className="h-8 rounded-xl px-2 text-[11px] font-bold">
+                      {isRecordingControlled ? "Stop" : "Record"}
                     </Button>
-                    <Button onClick={handleSubmitAnswer} variant="outline" className="h-9 rounded-2xl border-slate-300 text-xs">
-                      {currentQuestionIndex + 1 >= totalQuestionCount ? "Submit & Finish" : "Submit Answer"}
+                    <Button onClick={handleSubmitAnswer} variant="outline" className="h-8 rounded-xl border-slate-300 px-2 text-[11px] font-bold">
+                      {currentQuestionIndex + 1 >= totalQuestionCount ? "Finish" : "Submit"}
                     </Button>
-                    <Button onClick={handleSkipQuestion} variant="ghost" className="h-9 rounded-2xl text-xs text-slate-600">
-                      Skip Question
+                    <Button onClick={handleSkipQuestion} variant="ghost" className="h-8 rounded-xl px-2 text-[11px] font-bold text-slate-600">
+                      Skip
                     </Button>
                   </div>
                   <div className="mt-2">

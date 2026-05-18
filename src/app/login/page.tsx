@@ -17,7 +17,7 @@ import Image from "next/image";
 import organizationLogo from "@/assets/VMLogoWhite.png";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, CheckCircle } from "lucide-react";
-import { getMockCandidate } from "@/lib/mock-db";
+import { validateCandidateUniqueId } from "@/app/actions";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -25,28 +25,34 @@ export default function LoginPage() {
   const [uniqueId, setUniqueId] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    // Give a slight delay for better UX
-    setTimeout(() => {
-      const candidate = getMockCandidate(uniqueId);
-      if (candidate) {
+    try {
+      const result = await validateCandidateUniqueId(uniqueId);
+      if (result.success) {
         toast({
           title: "Credential Accepted",
           description: "Proceeding to Aadhar verification...",
         });
-        router.push(`/verify-aadhar?id=${uniqueId}`);
+        router.push(`/verify-aadhar?id=${uniqueId.trim().toUpperCase()}`);
       } else {
         toast({
           variant: "destructive",
           title: "Invalid Unique ID",
-          description: "Please check the interview link or ID provided to you.",
+          description: result.error || "Please check the interview link or ID provided to you.",
         });
         setIsLoading(false);
       }
-    }, 1000);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "Unable to Validate",
+        description: "Please try again or contact the recruiter.",
+      });
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -113,8 +119,8 @@ export default function LoginPage() {
                 />
               </div>
               <div className="text-xs text-muted-foreground bg-slate-50 p-3 rounded-lg border border-dashed">
-                  <p className="font-medium">Protocol Hint:</p>
-                  <p>Use "cand-se-001" for the Generative AI track.</p>
+                  <p className="font-medium">Use the unique ID from your invitation email.</p>
+                  <p>Your name, role, and test configuration will be loaded securely after validation.</p>
               </div>
             </CardContent>
             <CardFooter>

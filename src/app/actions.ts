@@ -3,6 +3,7 @@
 import { verifyAadharWithADI } from "@/lib/azure-id-verify";
 import { analyzeFrameWithAzure } from "@/lib/azure-vision-proctor";
 import { z } from "zod";
+import crypto from "crypto";
 import { db } from "@/lib/db";
 import { getInterviewQuestionSetForRole, getQuestionListForRole } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
@@ -135,31 +136,112 @@ export async function saveReviewerScorecardAction(input: { interviewId: string; 
   }
 }
 
-export async function registerCandidateAction(data: { name: string, email: string, role: string, difficulty: string }) {
-    const randomId = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const uniqueId = `AURA-${randomId}`;
+export async function validateCandidateUniqueId(id: string) {
+    const normalizedId = id.trim().toUpperCase();
+    if (!normalizedId) {
+        return { success: false, error: "Unique ID is required." };
+    }
+
+    try {
+        const candidate = await getCandidate(normalizedId);
+        if (!candidate) {
+            return { success: false, error: "Invalid Unique ID." };
+        }
+
+        return {
+            success: true,
+            candidate: {
+                id: candidate.id,
+                name: candidate.name,
+                email: candidate.email,
+                role: candidate.role,
+                difficulty: candidate.difficulty,
+            },
+        };
+    } catch (error) {
+        console.error("Error validating candidate ID:", error);
+        return { success: false, error: String(error) };
+    }
+}
+
+export async function registerCandidateAction(formData: FormData) {
+    const name = String(formData.get("name") || "").trim();
+    const email = String(formData.get("email") || "").trim();
+    const role = String(formData.get("role") || "Generative AI Engineer").trim();
+    const difficulty = String(formData.get("difficulty") || "medium").trim();
+    const resume = formData.get("resume");
+    const jobDescription = formData.get("jobDescription");
+
+    if (!name || !email || !role || !difficulty) {
+        return { success: false, error: "Name, email, role, and difficulty are required." };
+    }
+
+    if (!(resume instanceof File) || resume.size === 0 || resume.type !== "application/pdf") {
+        return { success: false, error: "Candidate resume must be uploaded as a PDF." };
+    }
+
+    if (!(jobDescription instanceof File) || jobDescription.size === 0 || jobDescription.type !== "application/pdf") {
+        return { success: false, error: "Job description must be uploaded as a PDF." };
+    }
+
+    const uniqueId = await createUniqueCandidateId();
     
     try {
+        const [resumeUpload, jdUpload] = await Promise.all([
+            uploadCandidateDocumentToAzure(uniqueId, resume, "resume"),
+            uploadCandidateDocumentToAzure(uniqueId, jobDescription, "job-description"),
+        ]);
+
         await db.query(
-            `INSERT INTO candidates (id, name, email, role, difficulty) 
-             VALUES ($1, $2, $3, $4, $5)`,
-            [uniqueId, data.name, data.email, data.role, data.difficulty]
+            `INSERT INTO candidates (
+                id, name, email, role, difficulty, resume_url, resume_file_name,
+                job_description_url, job_description_file_name
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+            [
+                uniqueId,
+                name,
+                email,
+                role,
+                difficulty,
+                resumeUpload.url,
+                resume.name,
+                jdUpload.url,
+                jobDescription.name,
+            ]
         );
         
-        // Construct the mock interview link
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://aura-interview.vercel.app";
         const interviewLink = `${baseUrl}/login?id=${uniqueId}`;
+        const emailResult = await sendCandidateInvitationEmail({
+            candidateName: name,
+            candidateEmail: email,
+            uniqueId,
+            interviewLink,
+            role,
+        });
         
         return { 
             success: true, 
             id: uniqueId, 
             link: interviewLink,
-            name: data.name
+            name,
+            emailSent: emailResult.success,
+            emailError: emailResult.error,
         };
     } catch (error) {
         console.error("Error registering candidate:", error);
         return { success: false, error: String(error) };
     }
+}
+
+async function createUniqueCandidateId() {
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const uniqueId = `AURA-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+        const existing = await db.query("SELECT 1 FROM candidates WHERE id = $1", [uniqueId]);
+        if (existing.rowCount === 0) return uniqueId;
+    }
+
+    throw new Error("Unable to generate a unique candidate ID.");
 }
 
 
@@ -274,6 +356,172 @@ async function uploadReportToAzure(interviewId: string, report: any, session: an
         console.log(`Successfully uploaded HTML report for ${interviewId} to Azure Storage.`);
     } catch (error) {
         console.error("Failed to upload report to Azure:", error);
+    }
+}
+
+async function uploadCandidateDocumentToAzure(candidateId: string, file: File, documentType: "resume" | "job-description") {
+    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+    const sasUrl = process.env.AZURE_STORAGE_SAS_URL;
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const blobName = `${candidateId}/${documentType}_${Date.now()}_${safeFileName}`;
+
+    if (!connectionString && !sasUrl) {
+        console.log(`[Mock Azure Document Upload] Skipping ${documentType} upload for ${candidateId}.`);
+        return { url: null };
+    }
+
+    try {
+        const { BlobServiceClient, ContainerClient } = await import("@azure/storage-blob");
+        let containerClient;
+
+        if (sasUrl) {
+            containerClient = new ContainerClient(sasUrl);
+        } else {
+            const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString!);
+            containerClient = blobServiceClient.getContainerClient("candidate-documents");
+            await containerClient.createIfNotExists();
+        }
+
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+
+        await blockBlobClient.uploadData(buffer, {
+            blobHTTPHeaders: { blobContentType: "application/pdf" },
+            metadata: {
+                candidateId,
+                documentType,
+                originalFileName: safeFileName,
+            },
+        });
+
+        return { url: blockBlobClient.url };
+    } catch (error) {
+        console.error(`Failed to upload ${documentType} to Azure:`, error);
+        throw new Error(`Failed to upload ${documentType} PDF to Azure Storage.`);
+    }
+}
+
+function parseAcsConnectionString(connectionString: string) {
+    const parts = Object.fromEntries(
+        connectionString
+            .split(";")
+            .map((part) => part.split("="))
+            .filter(([key, value]) => key && value)
+            .map(([key, ...value]) => [key.toLowerCase(), value.join("=")])
+    );
+
+    return {
+        endpoint: parts.endpoint,
+        accessKey: parts.accesskey,
+    };
+}
+
+function createAcsHeaders(method: string, url: URL, body: string, accessKey: string) {
+    const timestamp = new Date().toUTCString();
+    const contentHash = crypto.createHash("sha256").update(body).digest("base64");
+    const pathAndQuery = `${url.pathname}${url.search}`;
+    const stringToSign = `${method}\n${pathAndQuery}\n${timestamp};${url.host};${contentHash}`;
+    const signature = crypto
+        .createHmac("sha256", Buffer.from(accessKey, "base64"))
+        .update(stringToSign, "utf8")
+        .digest("base64");
+
+    return {
+        "Content-Type": "application/json",
+        "x-ms-date": timestamp,
+        "x-ms-content-sha256": contentHash,
+        Authorization: `HMAC-SHA256 SignedHeaders=x-ms-date;host;x-ms-content-sha256&Signature=${signature}`,
+    };
+}
+
+async function sendCandidateInvitationEmail(input: {
+    candidateName: string;
+    candidateEmail: string;
+    uniqueId: string;
+    interviewLink: string;
+    role: string;
+}) {
+    const connectionString =
+        process.env.AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING ||
+        process.env.AZURE_COMMUNICATION_CONNECTION_STRING;
+    const senderAddress = process.env.AZURE_COMMUNICATION_EMAIL_SENDER;
+
+    if (!connectionString || !senderAddress) {
+        console.log(`[Mock ACS Email] Invitation for ${input.candidateEmail}: ${input.interviewLink}`);
+        return { success: false, error: "ACS email environment variables are not configured." };
+    }
+
+    const { endpoint, accessKey } = parseAcsConnectionString(connectionString);
+    if (!endpoint || !accessKey) {
+        return { success: false, error: "ACS connection string must include endpoint and accessKey." };
+    }
+
+    const url = new URL("/emails:send?api-version=2023-03-31", endpoint);
+    const body = JSON.stringify({
+        senderAddress,
+        content: {
+            subject: `Aura Interview Invitation - ${input.role}`,
+            plainText: [
+                `Hello ${input.candidateName},`,
+                "",
+                `You have been invited to complete an Aura interview for ${input.role}.`,
+                `Interview link: ${input.interviewLink}`,
+                `Unique ID: ${input.uniqueId}`,
+                "",
+                "Instructions:",
+                "1. Open the interview link in a quiet room with a stable internet connection.",
+                "2. Enter your unique ID exactly as shown above.",
+                "3. Keep your Aadhar ID ready for verification.",
+                "4. Allow camera and microphone access when prompted.",
+                "5. The interview will be recorded and reviewed by the hiring team.",
+                "",
+                "Good luck.",
+            ].join("\n"),
+            html: `
+                <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6;">
+                    <h2>Aura Interview Invitation</h2>
+                    <p>Hello ${escapeHtml(input.candidateName)},</p>
+                    <p>You have been invited to complete an Aura interview for <strong>${escapeHtml(input.role)}</strong>.</p>
+                    <p><strong>Unique ID:</strong> <code style="font-size: 16px;">${escapeHtml(input.uniqueId)}</code></p>
+                    <p><a href="${escapeHtml(input.interviewLink)}" style="background: #056BFC; color: white; padding: 12px 18px; border-radius: 8px; text-decoration: none; display: inline-block;">Start Interview</a></p>
+                    <h3>Instructions</h3>
+                    <ol>
+                        <li>Open the interview link in a quiet room with a stable internet connection.</li>
+                        <li>Enter your unique ID exactly as shown above.</li>
+                        <li>Keep your Aadhar ID ready for verification.</li>
+                        <li>Allow camera and microphone access when prompted.</li>
+                        <li>The interview will be recorded and reviewed by the hiring team.</li>
+                    </ol>
+                    <p>Good luck.</p>
+                </div>
+            `,
+        },
+        recipients: {
+            to: [
+                {
+                    address: input.candidateEmail,
+                    displayName: input.candidateName,
+                },
+            ],
+        },
+    });
+
+    try {
+        const response = await fetch(url, {
+            method: "POST",
+            headers: createAcsHeaders("POST", url, body, accessKey),
+            body,
+        });
+
+        if (!response.ok && response.status !== 202) {
+            const errorText = await response.text();
+            return { success: false, error: `ACS email failed (${response.status}): ${errorText}` };
+        }
+
+        return { success: true };
+    } catch (error) {
+        console.error("Failed to send ACS invitation email:", error);
+        return { success: false, error: String(error) };
     }
 }
 

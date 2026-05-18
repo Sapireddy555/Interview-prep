@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { registerCandidateAction } from "@/app/actions";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, CheckCircle, Copy, Mail, UserPlus, ArrowLeft } from "lucide-react";
+import { Loader2, CheckCircle, Copy, Mail, UserPlus, ArrowLeft, FileText } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import organizationLogo from "@/assets/VMLogoWhite.png";
@@ -16,7 +16,9 @@ import organizationLogo from "@/assets/VMLogoWhite.png";
 export default function RecruiterPortal() {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
-  const [successData, setSuccessData] = useState<{ id: string, link: string, name: string } | null>(null);
+  const [successData, setSuccessData] = useState<{ id: string, link: string, name: string, emailSent?: boolean, emailError?: string } | null>(null);
+  const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [jobDescriptionFile, setJobDescriptionFile] = useState<File | null>(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -30,12 +32,26 @@ export default function RecruiterPortal() {
     setIsLoading(true);
 
     try {
-      const result = await registerCandidateAction(formData);
+      const payload = new FormData();
+      payload.append("name", formData.name);
+      payload.append("email", formData.email);
+      payload.append("role", formData.role);
+      payload.append("difficulty", formData.difficulty);
+      if (resumeFile) payload.append("resume", resumeFile);
+      if (jobDescriptionFile) payload.append("jobDescription", jobDescriptionFile);
+
+      const result = await registerCandidateAction(payload);
       if (result.success && result.id && result.link) {
-        setSuccessData({ id: result.id, link: result.link, name: result.name || formData.name });
+        setSuccessData({
+          id: result.id,
+          link: result.link,
+          name: result.name || formData.name,
+          emailSent: result.emailSent,
+          emailError: result.emailError,
+        });
         toast({
           title: "Registration Successful",
-          description: "Candidate has been registered and invitation is ready.",
+          description: result.emailSent ? "Candidate has been registered and emailed." : "Candidate registered. Email settings need attention.",
         });
       } else {
         toast({
@@ -95,12 +111,18 @@ export default function RecruiterPortal() {
             <div className="flex items-center gap-3 p-4 bg-blue-50 rounded-xl border border-blue-100">
                 <Mail className="h-5 w-5 text-[#056BFC]" />
                 <p className="text-xs text-blue-700 font-medium">
-                    A mock invitation email has been recorded in the system for <span className="underline">{formData.email}</span>.
+                    {successData.emailSent
+                      ? <>Invitation email sent to <span className="underline">{formData.email}</span>.</>
+                      : <>Candidate registered, but ACS email was not sent: {successData.emailError || "email service is not configured"}.</>}
                 </p>
             </div>
           </CardContent>
           <CardFooter className="flex flex-col gap-3">
-            <Button className="w-full h-14 text-lg font-bold bg-[#056BFC] hover:bg-[#024099] rounded-2xl" onClick={() => setSuccessData(null)}>
+            <Button className="w-full h-14 text-lg font-bold bg-[#056BFC] hover:bg-[#024099] rounded-2xl" onClick={() => {
+              setSuccessData(null);
+              setResumeFile(null);
+              setJobDescriptionFile(null);
+            }}>
               Register Another Candidate
             </Button>
             <Button variant="ghost" className="w-full text-slate-500" asChild>
@@ -146,7 +168,7 @@ export default function RecruiterPortal() {
                     <span className="text-[#056BFC]">Candidate</span>
                 </h2>
                 <p className="text-slate-500 leading-relaxed text-sm">
-                    Register candidates here to trigger the interview workflow. System generates a unique ID and mock email invitation instantly.
+                    Register candidates here to trigger the interview workflow. The system uploads candidate documents, generates a unique test ID, and sends the invitation email.
                 </p>
             </div>
 
@@ -155,7 +177,7 @@ export default function RecruiterPortal() {
                     <div className="w-8 h-8 rounded-lg bg-white shadow-sm border flex items-center justify-center font-bold text-slate-400">1</div>
                     <div>
                         <p className="text-sm font-bold text-[#303030]">Enter Details</p>
-                        <p className="text-xs text-slate-500">Provide basic profile information.</p>
+                        <p className="text-xs text-slate-500">Provide candidate details, resume, and job description.</p>
                     </div>
                 </div>
                 <div className="flex gap-4 items-start">
@@ -169,7 +191,7 @@ export default function RecruiterPortal() {
                     <div className="w-8 h-8 rounded-lg bg-white shadow-sm border flex items-center justify-center font-bold text-slate-400">3</div>
                     <div>
                         <p className="text-sm font-bold text-[#303030]">Generate Link</p>
-                        <p className="text-xs text-slate-500">System sends mock email with access code.</p>
+                        <p className="text-xs text-slate-500">System sends ACS email with access code.</p>
                     </div>
                 </div>
             </div>
@@ -219,6 +241,37 @@ export default function RecruiterPortal() {
                       <SelectItem value="hard">Hard (Advanced / Architect)</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="resume" className="text-xs font-bold text-slate-500">Candidate Resume PDF</Label>
+                    <Input
+                      id="resume"
+                      type="file"
+                      accept="application/pdf"
+                      className="h-12 rounded-xl bg-slate-50 border-none file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#056BFC]"
+                      onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
+                      required
+                    />
+                    {resumeFile ? (
+                      <p className="flex items-center gap-1 text-[11px] font-medium text-slate-500"><FileText className="h-3 w-3" /> {resumeFile.name}</p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="jobDescription" className="text-xs font-bold text-slate-500">Job Description PDF</Label>
+                    <Input
+                      id="jobDescription"
+                      type="file"
+                      accept="application/pdf"
+                      className="h-12 rounded-xl bg-slate-50 border-none file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#056BFC]"
+                      onChange={(e) => setJobDescriptionFile(e.target.files?.[0] || null)}
+                      required
+                    />
+                    {jobDescriptionFile ? (
+                      <p className="flex items-center gap-1 text-[11px] font-medium text-slate-500"><FileText className="h-3 w-3" /> {jobDescriptionFile.name}</p>
+                    ) : null}
+                  </div>
                 </div>
               </CardContent>
               <CardFooter className="p-10 bg-slate-50/50">

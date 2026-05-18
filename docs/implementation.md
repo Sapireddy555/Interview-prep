@@ -77,12 +77,22 @@ Blob Storage (recordings + report exports):
 - Env: `AZURE_STORAGE_CONNECTION_STRING` or `AZURE_STORAGE_SAS_URL`
 - Behavior when missing: logs and returns success (no-op).
 
+ACS Email (candidate invitations):
+- Server action helper inside `src/app/actions.ts`
+- Env: `AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING` or `AZURE_COMMUNICATION_CONNECTION_STRING`
+- Env: `AZURE_COMMUNICATION_EMAIL_SENDER`
+- Behavior when missing: candidate registration still completes and reports that email was not sent.
+
 ## End-to-end flows
 
 ### 1) Start interview (session creation)
 
 User action:
 - Candidate configures role/difficulty in `/start` and clicks “Start Interview”.
+
+Recruiter action:
+- Recruiter registers a candidate in `/tag` with name, email, resume PDF, and job description PDF.
+- The app uploads both PDFs to Azure Blob Storage, stores the candidate record in Postgres, generates a unique test ID, and sends the invitation through ACS Email.
 
 Implementation:
 - `src/app/start/page.tsx` calls `createInterviewSession(...)`.
