@@ -44,6 +44,8 @@ export function InterviewView() {
   const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const fullInterviewRecorderRef = useRef<MediaRecorder | null>(null);
   const fullRecordingChunkIndexRef = useRef<number>(0);
+  const recordingUploadChainRef = useRef<Promise<void>>(Promise.resolve());
+  const recordingUploadErrorRef = useRef<Error | null>(null);
   const violationsRef = useRef<{ timestamp: string; message: string }[]>([]);
   const securityEventsRef = useRef<SecurityEvent[]>([]);
   const suspicionScoreRef = useRef<number>(0);
@@ -189,24 +191,33 @@ export function InterviewView() {
       }
 
       fullRecordingChunkIndexRef.current = 0;
+      recordingUploadChainRef.current = Promise.resolve();
+      recordingUploadErrorRef.current = null;
       fullInterviewRecorderRef.current = recorder;
 
-      recorder.ondataavailable = async (event) => {
+      recorder.ondataavailable = (event) => {
         if (!event.data.size) return;
 
+        const chunkIndex = fullRecordingChunkIndexRef.current;
         const formData = new FormData();
         formData.append("interviewId", id);
-        formData.append("chunkIndex", String(fullRecordingChunkIndexRef.current));
-        formData.append("chunk", new File([event.data], `interview_${id}_${fullRecordingChunkIndexRef.current}.webm`, {
+        formData.append("chunkIndex", String(chunkIndex));
+        formData.append("chunk", new File([event.data], `interview_${id}_${chunkIndex}.webm`, {
           type: event.data.type || "video/webm",
         }));
         fullRecordingChunkIndexRef.current += 1;
 
-        try {
-          await uploadRecordingChunk(formData);
-        } catch (error) {
-          console.error("Full interview recording upload failed:", error);
-        }
+        recordingUploadChainRef.current = recordingUploadChainRef.current
+          .then(async () => {
+            const result = await uploadRecordingChunk(formData);
+            if (!result.success) {
+              throw new Error(result.error || `Recording chunk ${chunkIndex} upload failed.`);
+            }
+          })
+          .catch((error) => {
+            console.error("Full interview recording upload failed:", error);
+            recordingUploadErrorRef.current = error instanceof Error ? error : new Error(String(error));
+          });
       };
 
       recorder.start(10000);
@@ -220,18 +231,36 @@ export function InterviewView() {
     }
   }, [toast]);
 
-  const stopFullInterviewRecording = useCallback(() => {
+  const stopFullInterviewRecording = useCallback(async () => {
     const recorder = fullInterviewRecorderRef.current;
     if (recorder && recorder.state !== "inactive") {
-      recorder.stop();
+      await new Promise<void>((resolve) => {
+        const previousOnStop = recorder.onstop;
+        recorder.onstop = (event) => {
+          previousOnStop?.call(recorder, event);
+          resolve();
+        };
+
+        try {
+          recorder.requestData();
+        } catch (error) {
+          console.warn("Unable to request final recording data:", error);
+        }
+
+        recorder.stop();
+      });
+    }
+
+    await recordingUploadChainRef.current;
+    if (recordingUploadErrorRef.current) {
+      throw recordingUploadErrorRef.current;
     }
   }, []);
 
   const handleInterviewCompletion = async (msgs: Message[] = messages) => {
-    setIsCompleted(true);
-    stopFullInterviewRecording();
     if (!interviewId) return;
     try {
+      await stopFullInterviewRecording();
       const durationSeconds = interviewStartTime.current ? Math.max(0, Math.floor((Date.now() - interviewStartTime.current.getTime()) / 1000)) : 0;
       const sessionPayload = {
         score: 0,
@@ -243,7 +272,11 @@ export function InterviewView() {
         suspicionScore: suspicionScoreRef.current || 0,
       };
       await saveInterviewSession(interviewId, sessionPayload as any);
-      await generateAndSaveSummaryReport(interviewId);
+      const reportResult = await generateAndSaveSummaryReport(interviewId);
+      if (!reportResult.success) {
+        throw new Error(reportResult.error || "Report generation or upload failed.");
+      }
+      setIsCompleted(true);
       toast({ title: 'Interview saved', description: 'Session data and report saved.' });
     } catch (err) {
       console.error('Error completing interview', err);
@@ -346,7 +379,7 @@ export function InterviewView() {
         if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
           controlledRecorderRef.current.stop();
         }
-        stopFullInterviewRecording();
+        void stopFullInterviewRecording();
     }
   }, [toast, runProctoring, searchParams, startFullInterviewRecording, stopFullInterviewRecording]);
 

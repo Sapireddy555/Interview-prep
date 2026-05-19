@@ -389,6 +389,9 @@ async function uploadReportToAzure(interviewId: string, report: any, session: an
     const sasUrl = process.env.AZURE_STORAGE_SAS_URL;
 
     if (!connectionString && !sasUrl) {
+        if (process.env.NODE_ENV === "production") {
+            throw new Error("Azure Storage is not configured for report upload.");
+        }
         console.log(`[Mock Azure Report Upload] Saving report for ${interviewId} to local mock storage.`);
         return;
     }
@@ -415,6 +418,7 @@ async function uploadReportToAzure(interviewId: string, report: any, session: an
         console.log(`Successfully uploaded HTML report for ${interviewId} to Azure Storage.`);
     } catch (error) {
         console.error("Failed to upload report to Azure:", error);
+        throw error;
     }
 }
 
@@ -819,6 +823,9 @@ export async function uploadRecordingChunk(formData: FormData) {
   const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
 
   if (!sasUrl && !connectionString) {
+      if (process.env.NODE_ENV === "production") {
+        return { success: false, error: "Azure Storage is not configured for recording upload." };
+      }
       console.log(`[Mock Azure Upload] Received chunk ${chunkIndex} for ${interviewId}, size: ${chunkFile.size} bytes`);
       return { success: true };
   }
@@ -838,14 +845,10 @@ export async function uploadRecordingChunk(formData: FormData) {
       const blobName = `${interviewId}.webm`;
       const appendBlobClient = containerClient.getAppendBlobClient(blobName);
       
-      if (chunkIndex === 0) {
-          // If using SAS, we assume container exists. 
-          // AppendBlob create session if not exists.
-          try {
-            await appendBlobClient.createIfNotExists();
-          } catch(e) {
-            console.warn("Append Blob creation check:", e);
-          }
+      try {
+        await appendBlobClient.createIfNotExists();
+      } catch(e) {
+        console.warn("Append Blob creation check:", e);
       }
 
       const buffer = Buffer.from(await chunkFile.arrayBuffer());
