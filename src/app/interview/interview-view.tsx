@@ -8,6 +8,7 @@ import { getInterviewQuestionSetForRole, INTERVIEW_SECTION_TITLES } from "@/lib/
 import type { InterviewQuestion } from "@/lib/interview-constants";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
 import type { InterviewSettings, Message, SecurityEvent } from "@/lib/types";
 import { useAzureSpeech } from "@/hooks/use-azure-speech";
@@ -30,6 +31,12 @@ export function InterviewView() {
   const [showViolationsPanel, setShowViolationsPanel] = useState(false);
   const [interviewId, setInterviewId] = useState<string | null>(null);
   const [isCompleted, setIsCompleted] = useState(false);
+  const [hasAcceptedConsent, setHasAcceptedConsent] = useState(false);
+  const [consents, setConsents] = useState({
+    integrity: false,
+    devices: false,
+    recording: false,
+  });
   const [draftResponse, setDraftResponse] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const interviewStartTime = useRef<Date | null>(null);
@@ -564,6 +571,7 @@ export function InterviewView() {
 
   const currentQuestion = [...messages].reverse().find((message) => message.role === "ai");
   const isMicActive = isRecordingControlled || isListening;
+  const allConsentsAccepted = Object.values(consents).every(Boolean);
 
   if (isCompleted) {
     return (
@@ -588,6 +596,68 @@ export function InterviewView() {
               </Button>
               <p className="mt-4 text-xs text-slate-400 font-medium">This window will close automatically in 5 seconds.</p>
            </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!hasAcceptedConsent) {
+    return (
+      <div className="flex h-full w-full items-center justify-center p-4">
+        <div className="w-full max-w-2xl rounded-[2rem] border border-slate-200 bg-white p-6 shadow-2xl md:p-8">
+          <div className="mb-6">
+            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Interview Consent</p>
+            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900">Before You Start</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Please confirm the interview integrity requirements. The test will begin after all acknowledgements are selected.
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <label className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <Checkbox
+                checked={consents.integrity}
+                onCheckedChange={(checked) => setConsents((current) => ({ ...current, integrity: checked === true }))}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-bold text-slate-900">I will complete this interview honestly.</span>
+                <span className="mt-1 block text-xs leading-5 text-slate-500">I will not receive help from another person or use unauthorized assistance.</span>
+              </span>
+            </label>
+
+            <label className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <Checkbox
+                checked={consents.devices}
+                onCheckedChange={(checked) => setConsents((current) => ({ ...current, devices: checked === true }))}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-bold text-slate-900">I will not use additional devices or screens.</span>
+                <span className="mt-1 block text-xs leading-5 text-slate-500">I will keep only this interview window active unless instructed otherwise.</span>
+              </span>
+            </label>
+
+            <label className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <Checkbox
+                checked={consents.recording}
+                onCheckedChange={(checked) => setConsents((current) => ({ ...current, recording: checked === true }))}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-bold text-slate-900">I consent to recording and proctoring.</span>
+                <span className="mt-1 block text-xs leading-5 text-slate-500">My camera, microphone, transcript, and integrity events may be reviewed by ValueMomentum.</span>
+              </span>
+            </label>
+          </div>
+
+          <Button
+            className="mt-6 h-12 w-full rounded-2xl bg-[#056BFC] text-base font-bold hover:bg-[#024099]"
+            disabled={!allConsentsAccepted}
+            onClick={() => setHasAcceptedConsent(true)}
+          >
+            Start Test
+          </Button>
         </div>
       </div>
     );
@@ -699,17 +769,23 @@ export function InterviewView() {
                         .filter((question) => question.sectionId === sectionId).length;
                       const totalCount = questionListState.filter((question) => question.sectionId === sectionId).length;
                       const isActiveSection = currentSectionTitle === sectionTitle;
+                      const isCompletedSection = totalCount > 0 && completedCount >= totalCount && !isActiveSection;
+                      const sectionTone = isCompletedSection
+                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        : isActiveSection
+                          ? "border-primary/40 bg-primary/[0.08] text-primary shadow-sm"
+                          : "border-slate-200 bg-slate-50 text-slate-700";
 
                       return (
                         <div
                           key={sectionId}
-                          className={`rounded-2xl border px-3 py-2 text-xs transition-colors ${
-                            isActiveSection ? "border-primary/30 bg-primary/[0.05]" : "border-slate-200 bg-slate-50"
-                          }`}
+                          className={`rounded-2xl border px-3 py-2 text-xs transition-colors ${sectionTone}`}
                         >
                           <div className="flex items-center justify-between gap-3">
-                            <span className={`font-semibold ${isActiveSection ? "text-primary" : "text-slate-700"}`}>{sectionTitle}</span>
-                            <span className="font-mono text-slate-500">{Math.min(completedCount + (isActiveSection ? 1 : 0), totalCount)} / {totalCount}</span>
+                            <span className="font-semibold">{sectionTitle}</span>
+                            <span className={`font-mono ${isCompletedSection ? "text-emerald-700" : isActiveSection ? "text-primary" : "text-slate-500"}`}>
+                              {Math.min(completedCount + (isActiveSection ? 1 : 0), totalCount)} / {totalCount}
+                            </span>
                           </div>
                         </div>
                       );

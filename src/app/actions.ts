@@ -504,6 +504,10 @@ async function sendCandidateInvitationEmail(input: {
         process.env.AZURE_COMMUNICATION_EMAIL_CONNECTION_STRING ||
         process.env.AZURE_COMMUNICATION_CONNECTION_STRING;
     const senderAddress = process.env.AZURE_COMMUNICATION_EMAIL_SENDER;
+    const logoUrl =
+        process.env.EMAIL_LOGO_URL ||
+        process.env.NEXT_PUBLIC_EMAIL_LOGO_URL ||
+        "https://valuemomentum.com/wp-content/uploads/2026/03/ValueMomentum_logo.svg";
 
     if (!connectionString || !senderAddress) {
         console.log(`[Mock ACS Email] Invitation for ${input.candidateEmail}: ${input.interviewLink}`);
@@ -519,11 +523,11 @@ async function sendCandidateInvitationEmail(input: {
     const body = JSON.stringify({
         senderAddress,
         content: {
-            subject: `Aura Interview Invitation - ${input.role}`,
+            subject: `ValueMomentum Interview Invitation - ${input.role}`,
             plainText: [
                 `Hello ${input.candidateName},`,
                 "",
-                `You have been invited to complete an Aura interview for ${input.role}.`,
+                `ValueMomentum has invited you to complete an Aura interview for ${input.role}.`,
                 `Interview link: ${input.interviewLink}`,
                 `Unique ID: ${input.uniqueId}`,
                 "",
@@ -532,16 +536,23 @@ async function sendCandidateInvitationEmail(input: {
                 "2. Enter your unique ID exactly as shown above.",
                 "3. Keep your Aadhar ID ready for verification.",
                 "4. Allow camera and microphone access when prompted.",
-                "5. The interview will be recorded and reviewed by the hiring team.",
+                "5. Do not use additional devices, screens, notes, or external assistance.",
+                "6. The interview will be recorded and reviewed by the ValueMomentum hiring team.",
                 "",
-                "Good luck.",
+                "Regards,",
+                "ValueMomentum Talent Acquisition",
             ].join("\n"),
             html: `
-                <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6;">
-                    <h2>Aura Interview Invitation</h2>
+                <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6; max-width: 640px;">
+                    <div style="background: #056BFC; padding: 18px 22px; border-radius: 14px 14px 0 0;">
+                        ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="ValueMomentum" style="height: 34px; width: auto; display: block;" />` : `<div style="color: white; font-size: 20px; font-weight: 800;">ValueMomentum</div>`}
+                    </div>
+                    <div style="border: 1px solid #e2e8f0; border-top: 0; padding: 24px; border-radius: 0 0 14px 14px;">
+                    <div style="font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: #056BFC; font-weight: 800;">Aura Interview</div>
+                    <h2 style="margin: 8px 0 12px 0;">ValueMomentum Interview Invitation</h2>
                     <p>Hello ${escapeHtml(input.candidateName)},</p>
-                    <p>You have been invited to complete an Aura interview for <strong>${escapeHtml(input.role)}</strong>.</p>
-                    <p><strong>Unique ID:</strong> <code style="font-size: 16px;">${escapeHtml(input.uniqueId)}</code></p>
+                    <p>ValueMomentum has invited you to complete an Aura interview for <strong>${escapeHtml(input.role)}</strong>.</p>
+                    <p><strong>Unique ID:</strong> <code style="font-size: 16px; background: #f1f5f9; padding: 4px 8px; border-radius: 6px;">${escapeHtml(input.uniqueId)}</code></p>
                     <p><a href="${escapeHtml(input.interviewLink)}" style="background: #056BFC; color: white; padding: 12px 18px; border-radius: 8px; text-decoration: none; display: inline-block;">Start Interview</a></p>
                     <h3>Instructions</h3>
                     <ol>
@@ -549,9 +560,11 @@ async function sendCandidateInvitationEmail(input: {
                         <li>Enter your unique ID exactly as shown above.</li>
                         <li>Keep your Aadhar ID ready for verification.</li>
                         <li>Allow camera and microphone access when prompted.</li>
-                        <li>The interview will be recorded and reviewed by the hiring team.</li>
+                        <li>Do not use additional devices, screens, notes, or external assistance.</li>
+                        <li>The interview will be recorded and reviewed by the ValueMomentum hiring team.</li>
                     </ol>
-                    <p>Good luck.</p>
+                    <p>Regards,<br/><strong>ValueMomentum Talent Acquisition</strong></p>
+                    </div>
                 </div>
             `,
         },
