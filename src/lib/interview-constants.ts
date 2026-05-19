@@ -230,17 +230,41 @@ function normalizeQuestionBank(questionBank?: string | string[]): string[] {
     .filter(Boolean);
 }
 
+function splitQuestionBankBySection(questionBank?: string | string[]) {
+  const questions = normalizeQuestionBank(questionBank);
+  const sections: Record<"technical" | "resume_projects", string[]> = {
+    technical: [],
+    resume_projects: [],
+  };
+
+  for (const question of questions) {
+    const sectionMatch = question.match(/^\[(technical|resume_projects)\]\s*(.+)$/i);
+    if (sectionMatch) {
+      const sectionId = sectionMatch[1].toLowerCase() as "technical" | "resume_projects";
+      sections[sectionId].push(sectionMatch[2].trim());
+    } else {
+      sections.technical.push(question);
+    }
+  }
+
+  return sections;
+}
+
 export function getInterviewQuestionSetForRole(role: string, questionBank?: string | string[]): InterviewQuestion[] {
-  const customQuestions = normalizeQuestionBank(questionBank);
+  const customQuestions = splitQuestionBankBySection(questionBank);
   const technicalQuestions =
-    customQuestions.length > 0
-      ? customQuestions.slice(0, TECHNICAL_QUESTION_COUNT)
+    customQuestions.technical.length > 0
+      ? customQuestions.technical.slice(0, TECHNICAL_QUESTION_COUNT)
       : getTechnicalQuestionPool(role).slice(0, TECHNICAL_QUESTION_COUNT);
+  const resumeProjectQuestions =
+    customQuestions.resume_projects.length > 0
+      ? customQuestions.resume_projects.slice(0, RESUME_PROJECT_QUESTION_COUNT)
+      : buildResumeProjectQuestions(DEMO_RESUME_PROJECTS);
 
   return [
     ...createSectionQuestions("communication", COMMUNICATION_AND_ATTITUDE_QUESTIONS),
     ...createSectionQuestions("technical", technicalQuestions),
-    ...createSectionQuestions("resume_projects", buildResumeProjectQuestions(DEMO_RESUME_PROJECTS)),
+    ...createSectionQuestions("resume_projects", resumeProjectQuestions),
   ];
 }
 

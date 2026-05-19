@@ -3,7 +3,7 @@
 
 import { useSearchParams } from "next/navigation";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot } from "@/app/actions";
+import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot, fetchInterviewQuestionBank } from "@/app/actions";
 import { getInterviewQuestionSetForRole, INTERVIEW_SECTION_TITLES } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
 import { Button } from "@/components/ui/button";
@@ -135,12 +135,6 @@ export function InterviewView() {
                     ? "proctor_phone_detected"
                     : "visibility_visible";
             addSecurityEvent(eventType, res.data.violationType);
-
-            toast({
-              title: "Proctoring Warning",
-              description: res.data.warningMessage,
-              variant: "destructive",
-            });
 
             try {
               const hiCanvas = document.createElement("canvas");
@@ -483,36 +477,53 @@ export function InterviewView() {
 
 
   useEffect(() => {
-    const role = searchParams.get("role");
-    const difficulty = searchParams.get("difficulty") as InterviewSettings['difficulty'] | null;
-    const id = searchParams.get("interviewId");
+    let cancelled = false;
 
-    if (role && difficulty && id) {
-      setInterviewId(id);
-      setSettings({ role, difficulty, topics: searchParams.get("topics") || "", questionBank: searchParams.get("questionBank") || "" });
-      interviewStartTime.current = new Date();
-      
-      setIsLoading(true);
-      const orderedQuestionList = getInterviewQuestionSetForRole(role, searchParams.get("questionBank") || "");
-      setQuestionListState(orderedQuestionList);
-      setCurrentQuestionIndex(0);
-      const firstQuestion = orderedQuestionList[0];
-      const firstMessage: Message = {
-        id: Date.now().toString(),
-        role: "ai",
-        content: firstQuestion?.prompt ?? "Tell me about yourself.",
-        sectionId: firstQuestion?.sectionId,
-        sectionTitle: firstQuestion?.sectionTitle,
-      };
-      setMessages([firstMessage]);
-      setDraftResponse("");
-      setRemainingSeconds(60 * 60);
-      resetTranscript();
-      
-      setTimeout(() => {
-          setIsLoading(false);
-      }, 1000);
+    async function initializeInterview() {
+      const role = searchParams.get("role");
+      const difficulty = searchParams.get("difficulty") as InterviewSettings['difficulty'] | null;
+      const id = searchParams.get("interviewId");
+
+      if (role && difficulty && id) {
+        setInterviewId(id);
+        const fallbackQuestionBank = searchParams.get("questionBank") || "";
+        const questionBankResult = await fetchInterviewQuestionBank(id);
+        if (cancelled) return;
+
+        const questionBank = questionBankResult.success && questionBankResult.questionBank
+          ? questionBankResult.questionBank
+          : fallbackQuestionBank;
+        setSettings({ role, difficulty, topics: searchParams.get("topics") || "", questionBank });
+        interviewStartTime.current = new Date();
+        
+        setIsLoading(true);
+        const orderedQuestionList = getInterviewQuestionSetForRole(role, questionBank);
+        setQuestionListState(orderedQuestionList);
+        setCurrentQuestionIndex(0);
+        const firstQuestion = orderedQuestionList[0];
+        const firstMessage: Message = {
+          id: Date.now().toString(),
+          role: "ai",
+          content: firstQuestion?.prompt ?? "Tell me about yourself.",
+          sectionId: firstQuestion?.sectionId,
+          sectionTitle: firstQuestion?.sectionTitle,
+        };
+        setMessages([firstMessage]);
+        setDraftResponse("");
+        setRemainingSeconds(60 * 60);
+        resetTranscript();
+        
+        setTimeout(() => {
+          if (!cancelled) setIsLoading(false);
+        }, 1000);
+      }
     }
+
+    void initializeInterview();
+
+    return () => {
+      cancelled = true;
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, toast]);
 

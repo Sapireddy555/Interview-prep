@@ -12,6 +12,9 @@ const schema = `
     resume_file_name TEXT,
     job_description_url TEXT,
     job_description_file_name TEXT,
+    resume_text TEXT,
+    job_description_text TEXT,
+    question_bank TEXT,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -50,6 +53,9 @@ const schema = `
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_file_name TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_url TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_file_name TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_text TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_text TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS question_bank TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
 `;
 

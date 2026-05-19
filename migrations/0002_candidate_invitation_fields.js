@@ -6,6 +6,9 @@ exports.up = (pgm) => {
     ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_file_name TEXT;
     ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_url TEXT;
     ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_file_name TEXT;
+    ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_text TEXT;
+    ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_text TEXT;
+    ALTER TABLE candidates ADD COLUMN IF NOT EXISTS question_bank TEXT;
     ALTER TABLE candidates ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
   `);
 };
@@ -17,6 +20,9 @@ exports.down = (pgm) => {
     ALTER TABLE candidates DROP COLUMN IF EXISTS job_description_url;
     ALTER TABLE candidates DROP COLUMN IF EXISTS resume_file_name;
     ALTER TABLE candidates DROP COLUMN IF EXISTS resume_url;
+    ALTER TABLE candidates DROP COLUMN IF EXISTS question_bank;
+    ALTER TABLE candidates DROP COLUMN IF EXISTS job_description_text;
+    ALTER TABLE candidates DROP COLUMN IF EXISTS resume_text;
     ALTER TABLE candidates DROP COLUMN IF EXISTS email;
     ALTER TABLE candidates DROP COLUMN IF EXISTS name;
   `);

@@ -69,3 +69,22 @@ export async function verifyAadharWithADI(imageDataUri: string) {
     return { verified: false, message: "Error communicating with verification service." };
   }
 }
+
+export async function extractTextWithADI(file: File) {
+  if (!endpoint || !key) {
+    console.warn("Azure Document Intelligence credentials missing. PDF text extraction skipped.");
+    return "";
+  }
+
+  try {
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const client = new DocumentAnalysisClient(endpoint, new AzureKeyCredential(key));
+    const poller = await client.beginAnalyzeDocument("prebuilt-read", buffer);
+    const result = await poller.pollUntilDone();
+
+    return (result.content || "").trim();
+  } catch (error) {
+    console.error("Azure Document Intelligence PDF extraction error:", error);
+    return "";
+  }
+}

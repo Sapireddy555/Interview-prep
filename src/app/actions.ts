@@ -1,6 +1,7 @@
 "use server";
 
 import { verifyAadharWithADI } from "@/lib/azure-id-verify";
+import { extractTextWithADI } from "@/lib/azure-id-verify";
 import { analyzeFrameWithAzure } from "@/lib/azure-vision-proctor";
 import { z } from "zod";
 import crypto from "crypto";
@@ -123,6 +124,23 @@ export async function getCandidate(id: string) {
     return res.rows[0] || null;
 }
 
+export async function fetchInterviewQuestionBank(interviewId: string) {
+    try {
+        const res = await db.query(
+            `SELECT c.question_bank
+             FROM sessions s
+             LEFT JOIN candidates c ON c.id = s.candidate_id
+             WHERE s.id = $1`,
+            [interviewId]
+        );
+
+        return { success: true, questionBank: res.rows[0]?.question_bank || "" };
+    } catch (error) {
+        console.error("Error loading interview question bank:", error);
+        return { success: false, questionBank: "", error: String(error) };
+    }
+}
+
 export async function saveReviewerScorecardAction(input: { interviewId: string; scorecard: ReviewerScorecard }) {
   try {
     await db.query("UPDATE sessions SET reviewer_scorecard = $1 WHERE id = $2", [
@@ -187,16 +205,19 @@ export async function registerCandidateAction(formData: FormData) {
     const uniqueId = await createUniqueCandidateId();
     
     try {
-        const [resumeUpload, jdUpload] = await Promise.all([
+        const [resumeUpload, jdUpload, resumeText, jobDescriptionText] = await Promise.all([
             uploadCandidateDocumentToAzure(uniqueId, resume, "resume"),
             uploadCandidateDocumentToAzure(uniqueId, jobDescription, "job-description"),
+            extractTextWithADI(resume),
+            extractTextWithADI(jobDescription),
         ]);
+        const questionBank = buildCandidateQuestionBank(role, resumeText, jobDescriptionText);
 
         await db.query(
             `INSERT INTO candidates (
                 id, name, email, role, difficulty, resume_url, resume_file_name,
-                job_description_url, job_description_file_name
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                job_description_url, job_description_file_name, resume_text, job_description_text, question_bank
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
             [
                 uniqueId,
                 name,
@@ -207,10 +228,13 @@ export async function registerCandidateAction(formData: FormData) {
                 resume.name,
                 jdUpload.url,
                 jobDescription.name,
+                resumeText,
+                jobDescriptionText,
+                questionBank,
             ]
         );
         
-        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://aura-interview.vercel.app";
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://interview-prep-ucdu.onrender.com";
         const interviewLink = `${baseUrl}/login?id=${uniqueId}`;
         const emailResult = await sendCandidateInvitationEmail({
             candidateName: name,
@@ -244,6 +268,35 @@ async function createUniqueCandidateId() {
     throw new Error("Unable to generate a unique candidate ID.");
 }
 
+function compactDocumentText(text: string, maxLength = 3500) {
+    return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function buildCandidateQuestionBank(role: string, resumeText: string, jobDescriptionText: string) {
+    const resume = compactDocumentText(resumeText);
+    const jd = compactDocumentText(jobDescriptionText);
+
+    const technicalQuestions = jd
+        ? [
+            `[technical] The job description for this ${role} role includes these expectations: ${jd}. Which of these requirements best matches your experience, and can you walk through a concrete example?`,
+            `[technical] Based on the job description, describe how you would approach one of the core responsibilities end to end in a production setting.`,
+            `[technical] Pick a technology, platform, or responsibility mentioned in the job description and explain your depth of hands-on experience with it.`,
+            `[technical] What risks or trade-offs would you watch for while delivering the kind of work described in this job description?`,
+            `[technical] How would you measure success for the main responsibilities described in this job description?`,
+        ]
+        : [];
+
+    const resumeQuestions = resume
+        ? [
+            `[resume_projects] Your resume includes this background: ${resume}. Walk me through the most relevant project for this role, including the business problem, your responsibilities, and the outcome.`,
+            `[resume_projects] From your resume, choose a project where you personally solved a difficult technical or delivery challenge. What happened and what did you do?`,
+            `[resume_projects] Looking at your resume experience, what is one project or achievement you would improve if you had to do it again, and why?`,
+        ]
+        : [];
+
+    return [...technicalQuestions, ...resumeQuestions].join("\n");
+}
+
 
 const proctoringInputSchema = z.object({
   videoFrameDataUri: z.string(),
@@ -264,7 +317,13 @@ import { analyzeFullInterview } from "@/ai/flows/full-interview-analysis";
 
 export async function generateAndSaveSummaryReport(interviewId: string) {
   try {
-    const sessionRes = await db.query("SELECT * FROM sessions WHERE id = $1", [interviewId]);
+    const sessionRes = await db.query(
+      `SELECT s.*, c.question_bank
+       FROM sessions s
+       LEFT JOIN candidates c ON c.id = s.candidate_id
+       WHERE s.id = $1`,
+      [interviewId]
+    );
     const session = sessionRes.rows[0];
     if (!session) {
       throw new Error("Interview session not found.");
@@ -623,7 +682,7 @@ function renderQuestionListItems(questions: InterviewQuestion[], sectionTitle: s
 }
 
 function formatReportToHtml(id: string, report: any, session: any): string {
-  const questionSet = getInterviewQuestionSetForRole(session.role || "Software Engineer");
+  const questionSet = getInterviewQuestionSetForRole(session.role || "Software Engineer", session.question_bank || "");
   const sectionBlocks = (report.sectionFeedback || []).map((section: any) => {
     const colors = getSectionColorTokens(section.sectionId);
     const strengths = (section.strengths || [])
