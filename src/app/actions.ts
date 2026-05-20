@@ -236,11 +236,12 @@ export async function registerCandidateAction(formData: FormData) {
         
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://interview-prep-ucdu.onrender.com";
         const interviewLink = `${baseUrl}/login?id=${uniqueId}`;
+        const loginLink = `${baseUrl}/login`;
         const emailResult = await sendCandidateInvitationEmail({
             candidateName: name,
             candidateEmail: email,
             uniqueId,
-            interviewLink,
+            interviewLink: loginLink,
             role,
         });
         
@@ -286,6 +287,7 @@ export async function registerBulkJobDescriptionTestAction(formData: FormData) {
         ]);
         const questionBank = buildJobDescriptionQuestionBank(testName, jobDescriptionText);
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://interview-prep-ucdu.onrender.com";
+        const loginLink = `${baseUrl}/login`;
         const invitations = [];
 
         for (const email of emails.valid) {
@@ -318,7 +320,7 @@ export async function registerBulkJobDescriptionTestAction(formData: FormData) {
                 candidateName,
                 candidateEmail: email,
                 uniqueId,
-                interviewLink,
+                interviewLink: loginLink,
                 role: testName,
             });
 
