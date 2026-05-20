@@ -6,6 +6,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot, fetchInterviewQuestionBank } from "@/app/actions";
 import { getInterviewQuestionSetForRole, INTERVIEW_SECTION_TITLES } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,6 +14,7 @@ import { MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
 import type { InterviewSettings, Message, SecurityEvent } from "@/lib/types";
 import { useAzureSpeech } from "@/hooks/use-azure-speech";
 import { useToast } from "@/hooks/use-toast";
+import organizationLogo from "@/assets/VMLogoWhite.png";
 
 export function InterviewView() {
   const searchParams = useSearchParams();
@@ -32,6 +34,7 @@ export function InterviewView() {
   const [interviewId, setInterviewId] = useState<string | null>(null);
   const [isCompleted, setIsCompleted] = useState(false);
   const [hasAcceptedConsent, setHasAcceptedConsent] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
   const [consents, setConsents] = useState({
     integrity: false,
     devices: false,
@@ -39,6 +42,7 @@ export function InterviewView() {
   });
   const [draftResponse, setDraftResponse] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
   const interviewStartTime = useRef<Date | null>(null);
   const proctoringIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -72,6 +76,21 @@ export function InterviewView() {
     const evt: SecurityEvent = { timestamp: getRelativeTimestamp(), type, details };
     securityEventsRef.current.push(evt);
   }, [getRelativeTimestamp]);
+
+  const attachCameraStream = useCallback((stream: MediaStream | null = cameraStreamRef.current) => {
+    if (!stream) return;
+
+    if (proctorVideoRef.current && proctorVideoRef.current.srcObject !== stream) {
+      proctorVideoRef.current.srcObject = stream;
+    }
+
+    if (videoRef.current && videoRef.current.srcObject !== stream) {
+      videoRef.current.srcObject = stream;
+      void videoRef.current.play().catch((error) => {
+        console.warn("Unable to autoplay candidate camera preview:", error);
+      });
+    }
+  }, []);
 
   const totalQuestionCount =
     questionListState.length || getInterviewQuestionSetForRole(settings?.role || "", settings?.questionBank).length;
@@ -259,8 +278,14 @@ export function InterviewView() {
 
   const handleInterviewCompletion = async (msgs: Message[] = messages) => {
     if (!interviewId) return;
+    let recordingWarning: string | null = null;
     try {
-      await stopFullInterviewRecording();
+      try {
+        await stopFullInterviewRecording();
+      } catch (recordingError) {
+        console.error("Recording upload failed, continuing with interview save:", recordingError);
+        recordingWarning = recordingError instanceof Error ? recordingError.message : String(recordingError);
+      }
       const durationSeconds = interviewStartTime.current ? Math.max(0, Math.floor((Date.now() - interviewStartTime.current.getTime()) / 1000)) : 0;
       const sessionPayload = {
         score: 0,
@@ -277,7 +302,11 @@ export function InterviewView() {
         throw new Error(reportResult.error || "Report generation or upload failed.");
       }
       setIsCompleted(true);
-      toast({ title: 'Interview saved', description: 'Session data and report saved.' });
+      const storageWarning = recordingWarning || reportResult.storageWarning;
+      toast({
+        title: 'Interview saved',
+        description: storageWarning ? 'Session saved. Azure Storage needs attention.' : 'Session data and report saved.',
+      });
     } catch (err) {
       console.error('Error completing interview', err);
       toast({ title: 'Save failed', description: 'Could not save interview session', variant: 'destructive' });
@@ -293,15 +322,9 @@ export function InterviewView() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
         setHasCameraPermission(true);
-
-        // Attach camera stream to a dedicated hidden proctor video element
-        if (proctorVideoRef.current) {
-          proctorVideoRef.current.srcObject = stream;
-        }
-        // Only set the visible video if not already set (so screen-share won't clobber the proctor stream)
-        if (videoRef.current && !videoRef.current.srcObject) {
-          videoRef.current.srcObject = stream;
-        }
+        cameraStreamRef.current = stream;
+        setCameraStream(stream);
+        attachCameraStream(stream);
 
         if (id) {
             startFullInterviewRecording(stream, id);
@@ -380,8 +403,15 @@ export function InterviewView() {
           controlledRecorderRef.current.stop();
         }
         void stopFullInterviewRecording();
+        cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
     }
   }, [toast, runProctoring, searchParams, startFullInterviewRecording, stopFullInterviewRecording]);
+
+  useEffect(() => {
+    if (!hasAcceptedConsent || !cameraStream) return;
+    attachCameraStream(cameraStream);
+  }, [attachCameraStream, cameraStream, hasAcceptedConsent]);
 
   useEffect(() => {
     if (!interviewId || isCompleted) return;
@@ -636,18 +666,32 @@ export function InterviewView() {
 
   if (!hasAcceptedConsent) {
     return (
-      <div className="flex h-full w-full items-center justify-center p-4">
-        <div className="w-full max-w-2xl rounded-[2rem] border border-slate-200 bg-white p-6 shadow-2xl md:p-8">
-          <div className="mb-6">
-            <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-primary">Interview Consent</p>
-            <h1 className="mt-2 text-2xl font-black tracking-tight text-slate-900">Before You Start</h1>
-            <p className="mt-2 text-sm leading-6 text-slate-500">
+      <div className="flex h-full w-full items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-lg">
+          <div className="flex items-center gap-4 border-b border-slate-200 px-6 py-4">
+            <Image
+              src={organizationLogo}
+              alt="ValueMomentum Logo"
+              className="h-6 w-auto object-contain"
+              style={{ filter: "brightness(0) saturate(100%) invert(32%) sepia(95%) saturate(3083%) hue-rotate(213deg) brightness(99%) contrast(101%)" }}
+            />
+            <div className="h-7 w-px bg-slate-200" />
+            <div>
+              <p className="text-sm font-black leading-none text-slate-900">Aura Interview</p>
+              <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-[#056BFC]">Candidate Consent</p>
+            </div>
+          </div>
+
+          <div className="p-6 md:p-7">
+          <div className="mb-5">
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">Before You Start</h1>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
               Please confirm the interview integrity requirements. The test will begin after all acknowledgements are selected.
             </p>
           </div>
 
           <div className="space-y-3">
-            <label className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <label className="flex gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-4">
               <Checkbox
                 checked={consents.integrity}
                 onCheckedChange={(checked) => setConsents((current) => ({ ...current, integrity: checked === true }))}
@@ -659,7 +703,7 @@ export function InterviewView() {
               </span>
             </label>
 
-            <label className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <label className="flex gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-4">
               <Checkbox
                 checked={consents.devices}
                 onCheckedChange={(checked) => setConsents((current) => ({ ...current, devices: checked === true }))}
@@ -671,7 +715,7 @@ export function InterviewView() {
               </span>
             </label>
 
-            <label className="flex gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            <label className="flex gap-3 rounded-lg border border-slate-200 bg-slate-50/70 p-4">
               <Checkbox
                 checked={consents.recording}
                 onCheckedChange={(checked) => setConsents((current) => ({ ...current, recording: checked === true }))}
@@ -685,12 +729,13 @@ export function InterviewView() {
           </div>
 
           <Button
-            className="mt-6 h-12 w-full rounded-2xl bg-[#056BFC] text-base font-bold hover:bg-[#024099]"
+            className="mt-6 h-11 w-full rounded-lg bg-[#056BFC] text-base font-bold hover:bg-[#024099]"
             disabled={!allConsentsAccepted}
             onClick={() => setHasAcceptedConsent(true)}
           >
             Start Test
           </Button>
+          </div>
         </div>
       </div>
     );
@@ -700,25 +745,25 @@ export function InterviewView() {
     <div className="flex h-full w-full flex-col">
       {/* hidden proctoring video to keep camera frames even during screen-share */}
       <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
-      <div className="flex h-full min-h-0 flex-col rounded-[1.75rem] border border-slate-200/80 bg-card/70 p-2.5 shadow-xl backdrop-blur md:p-3">
-        <div className="mb-2.5 flex flex-col gap-2.5 rounded-[1.35rem] border border-slate-200 bg-white/90 px-3.5 py-2.5 shadow-sm md:flex-row md:items-center md:justify-between">
+      <div className="flex h-full min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <div className="mb-3 flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-primary">Interview Session</p>
             <h1 className="mt-0.5 text-lg font-bold text-slate-900">{settings?.role || "Interview"}</h1>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm">
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-sm">
               <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-muted-foreground">Question</p>
               <p className="font-mono text-xs font-semibold text-slate-900">
                 {currentQuestionIndex + 1} / {totalQuestionCount}
               </p>
             </div>
-            <div className={`rounded-2xl border px-2.5 py-1 text-sm transition-colors ${timerTone.wrapper}`}>
+            <div className={`rounded-lg border px-2.5 py-1 text-sm transition-colors ${timerTone.wrapper}`}>
               <p className={`text-[9px] font-bold uppercase tracking-[0.18em] ${timerTone.label}`}>Timer</p>
               <p className={`font-mono text-xs font-semibold ${timerTone.value}`}>{formattedRemainingTime}</p>
             </div>
-            <Button variant="destructive" className="h-8 rounded-2xl px-3 text-xs" onClick={() => handleInterviewCompletion(messages)}>
+            <Button variant="destructive" className="h-8 rounded-lg px-3 text-xs" onClick={() => handleInterviewCompletion(messages)}>
               End Interview
             </Button>
           </div>
@@ -726,8 +771,8 @@ export function InterviewView() {
 
         <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(230px,290px)_minmax(0,1fr)]">
           <aside className="min-h-0 lg:sticky lg:top-0 lg:self-start">
-            <div className="overflow-hidden rounded-[2rem] border border-slate-200 bg-slate-950 text-white shadow-2xl">
-              <div className="relative aspect-[4/3.95] bg-slate-900">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              <div className="relative aspect-[4/3.95] bg-slate-100">
                 <video
                   ref={videoRef}
                   className="h-full w-full object-cover"
@@ -736,25 +781,25 @@ export function InterviewView() {
                   playsInline
                 />
                 {!hasCameraPermission && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-slate-950/90">
-                    <div className="rounded-3xl border border-red-400/30 bg-red-500/10 px-6 py-5 text-center">
-                      <VolumeX className="mx-auto mb-3 h-8 w-8 text-red-300" />
-                      <p className="text-sm font-semibold text-red-100">Camera unavailable</p>
-                      <p className="mt-1 text-xs text-red-100/70">Enable permissions to continue proctoring.</p>
+                  <div className="absolute inset-0 flex items-center justify-center bg-slate-100">
+                    <div className="rounded-lg border border-red-200 bg-white px-6 py-5 text-center shadow-sm">
+                      <VolumeX className="mx-auto mb-3 h-8 w-8 text-red-500" />
+                      <p className="text-sm font-semibold text-slate-900">Camera unavailable</p>
+                      <p className="mt-1 text-xs text-slate-500">Enable permissions to continue proctoring.</p>
                     </div>
                   </div>
                 )}
 
-                <div className="absolute right-3 top-3 flex items-center gap-2 rounded-full bg-red-500/15 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-red-200">
-                  <span className="h-2 w-2 rounded-full bg-red-400 animate-pulse" />
+                <div className="absolute right-3 top-3 flex items-center gap-2 rounded-full border border-red-200 bg-white/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-red-600 shadow-sm">
+                  <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
                   Live
                 </div>
 
-                <div className="absolute bottom-2.5 left-2.5 right-2.5 rounded-[1.1rem] border border-white/10 bg-black/45 p-2.5 backdrop-blur">
+                <div className="absolute bottom-2.5 left-2.5 right-2.5 rounded-lg border border-slate-200 bg-white/90 p-2.5 shadow-sm backdrop-blur">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-white/60">Recording Status</p>
-                      <p className="mt-1 text-[11px] font-semibold text-white">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-500">Recording Status</p>
+                      <p className="mt-1 text-[11px] font-semibold text-slate-900">
                         {isRecordingControlled ? "Answer recording in progress" : "Ready for next response"}
                       </p>
                     </div>
@@ -767,7 +812,7 @@ export function InterviewView() {
           </aside>
 
           <section className="flex min-h-0 flex-col gap-2">
-            <div className="rounded-[1.5rem] border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">
@@ -781,11 +826,11 @@ export function InterviewView() {
                       Section Progress {currentSectionQuestionNumber} / {sectionQuestionCounts[currentSectionTitle] || 0}
                     </span>
                   </div>
-                  <p className="mt-1 text-[11px] font-semibold leading-4.5 text-slate-900 md:text-[0.82rem]">
+                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-900 md:text-[0.95rem]">
                     {currentQuestion?.content}
                   </p>
                 </div>
-                <Button onClick={toggleVoice} variant="outline" size="sm" className="rounded-full bg-white" disabled={isSpeaking}>
+                <Button onClick={toggleVoice} variant="outline" size="sm" className="rounded-lg bg-white" disabled={isSpeaking}>
                   {isVoiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
                 </Button>
               </div>
@@ -793,7 +838,7 @@ export function InterviewView() {
 
             <div className="grid gap-2">
               <div className="flex flex-col gap-2">
-                <div className="rounded-[1.5rem] border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Interview Sections</p>
                   <div className="mt-2 space-y-2">
                     {Object.entries(INTERVIEW_SECTION_TITLES).map(([sectionId, sectionTitle]) => {
@@ -805,15 +850,15 @@ export function InterviewView() {
                       const isActiveSection = currentSectionTitle === sectionTitle;
                       const isCompletedSection = totalCount > 0 && completedCount >= totalCount && !isActiveSection;
                       const sectionTone = isCompletedSection
-                        ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                        ? "border-emerald-100 bg-emerald-50/70 text-emerald-700"
                         : isActiveSection
-                          ? "border-primary/40 bg-primary/[0.08] text-primary shadow-sm"
+                          ? "border-blue-200 bg-blue-50 text-[#056BFC]"
                           : "border-slate-200 bg-slate-50 text-slate-700";
 
                       return (
                         <div
                           key={sectionId}
-                          className={`rounded-2xl border px-3 py-2 text-xs transition-colors ${sectionTone}`}
+                          className={`rounded-lg border px-3 py-2 text-xs transition-colors ${sectionTone}`}
                         >
                           <div className="flex items-center justify-between gap-3">
                             <span className="font-semibold">{sectionTitle}</span>
@@ -827,16 +872,20 @@ export function InterviewView() {
                   </div>
                 </div>
 
-                <div className="rounded-[1.5rem] border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Response Controls</p>
-                  <div className="mt-2 grid grid-cols-3 gap-1.5">
-                    <Button onClick={handleRecordToggle} disabled={!audioStream} className="h-8 rounded-xl px-2 text-[11px] font-bold">
+                  <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
+                    <Button onClick={handleSubmitAnswer} className="h-9 rounded-lg bg-[#056BFC] px-3 text-xs font-bold hover:bg-[#024099]">
+                      {isRecordingControlled
+                        ? "Stop Recording"
+                        : currentQuestionIndex + 1 >= totalQuestionCount
+                          ? "Finish Interview"
+                          : "Submit Answer"}
+                    </Button>
+                    <Button onClick={handleRecordToggle} disabled={!audioStream} variant="outline" className="h-9 rounded-lg border-slate-300 px-3 text-xs font-bold">
                       {isRecordingControlled ? "Stop" : "Record"}
                     </Button>
-                    <Button onClick={handleSubmitAnswer} variant="outline" className="h-8 rounded-xl border-slate-300 px-2 text-[11px] font-bold">
-                      {currentQuestionIndex + 1 >= totalQuestionCount ? "Finish" : "Submit"}
-                    </Button>
-                    <Button onClick={handleSkipQuestion} variant="ghost" className="h-8 rounded-xl px-2 text-[11px] font-bold text-slate-600">
+                    <Button onClick={handleSkipQuestion} variant="ghost" className="h-9 rounded-lg px-3 text-xs font-bold text-slate-600">
                       Skip
                     </Button>
                   </div>
@@ -845,11 +894,11 @@ export function InterviewView() {
                       value={draftResponse}
                       onChange={(event) => setDraftResponse(event.target.value)}
                       placeholder="Your recorded response will appear here. You can edit it before submitting."
-                      className="min-h-20 rounded-2xl border-slate-200 resize-none text-xs"
+                      className="min-h-20 rounded-lg border-slate-200 resize-none text-xs"
                     />
                   </div>
                   <p className="mt-1.5 text-[10px] text-muted-foreground">
-                    Click on "Record Answer" to record your answer. Click "Submit Answer" to move to next question.
+                    Use Record to capture audio, then Submit Answer to continue.
                   </p>
                 </div>
 

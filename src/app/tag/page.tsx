@@ -43,6 +43,12 @@ type BulkSuccessData = {
 
 type SuccessData = SingleSuccessData | BulkSuccessData;
 
+const inputClass = "h-11 rounded-lg border border-slate-200 bg-white focus-visible:ring-2 focus-visible:ring-[#056BFC]/20";
+const fileInputClass = "h-11 rounded-lg border border-slate-200 bg-white file:mr-3 file:rounded-md file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#056BFC]";
+const selectTriggerClass = "h-11 rounded-lg border border-slate-200 bg-white";
+const sectionClass = "rounded-xl border border-slate-200 bg-slate-50/60 p-4";
+const sectionTitleClass = "text-xs font-black uppercase tracking-[0.16em] text-slate-500";
+
 export default function RecruiterPortal() {
   const { toast } = useToast();
   const [mode, setMode] = useState<Mode>("single");
@@ -348,59 +354,64 @@ export default function RecruiterPortal() {
   const isSingleMode = mode === "single";
 
   return (
-    <div className="min-h-screen bg-[#F8F8F8] flex flex-col">
-      <header className="h-20 bg-white border-b flex items-center px-8 justify-between sticky top-0 z-10">
-        <div className="flex items-center gap-6">
-          <div className="bg-[#056BFC] p-2 rounded-xl shadow-md">
-            <Image src={organizationLogo} alt="ValueMomentum Logo" className="h-6 w-auto object-contain" />
-          </div>
-          <div className="w-px h-8 bg-slate-200" />
+    <div className="min-h-screen bg-slate-50 flex flex-col">
+      <header className="h-16 bg-white border-b border-slate-200 sticky top-0 z-10">
+        <div className="mx-auto flex h-full w-full max-w-6xl items-center justify-between px-4 md:px-6">
+        <div className="flex items-center gap-5">
+          <Image
+            src={organizationLogo}
+            alt="ValueMomentum Logo"
+            className="h-7 w-auto object-contain"
+            style={{ filter: "brightness(0) saturate(100%) invert(32%) sepia(95%) saturate(3083%) hue-rotate(213deg) brightness(99%) contrast(101%)" }}
+          />
+          <div className="w-px h-7 bg-slate-200" />
           <div className="flex items-center gap-2">
-            <div className="h-7 w-7 bg-[#F8F8F8] rounded-lg flex items-center justify-center text-[#056BFC] font-black text-sm border">A</div>
+            <div className="h-7 w-7 bg-slate-50 rounded-lg flex items-center justify-center text-[#056BFC] font-black text-sm border border-slate-200">A</div>
             <div>
               <h1 className="text-sm font-black text-[#303030] leading-none">Aura</h1>
               <p className="text-[9px] uppercase font-bold text-[#056BFC] tracking-widest mt-0.5">TAG Hub</p>
             </div>
           </div>
         </div>
-        <Button variant="outline" size="sm" asChild className="rounded-xl">
+        <Button variant="outline" size="sm" asChild className="rounded-lg border-slate-200">
           <Link href="/dashboard">Dashboard</Link>
         </Button>
+        </div>
       </header>
 
-      <main className="flex-1 p-6 md:p-12 flex flex-col items-center">
-        <div className="max-w-4xl w-full grid grid-cols-1 lg:grid-cols-5 gap-12 items-start">
-          <div className="lg:col-span-2 space-y-8">
-            <div className="space-y-4">
-              <div className="inline-flex items-center gap-2 px-3 py-1 bg-blue-50 text-[#056BFC] rounded-full text-[10px] font-black uppercase tracking-wider">
+      <main className="flex-1 px-4 py-8 md:px-6 md:py-10">
+        <div className="mx-auto grid w-full max-w-6xl grid-cols-1 items-start gap-8 lg:grid-cols-12">
+          <div className="lg:col-span-4 space-y-6">
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-[#056BFC]">
                 {isSingleMode ? <UserPlus className="h-3 w-3" /> : <Users className="h-3 w-3" />}
                 {isSingleMode ? "Single Invite" : "Bulk Sharing"}
               </div>
-              <h2 className="text-4xl font-black text-[#303030] tracking-tight leading-tight">
+              <h2 className="text-3xl font-black text-[#303030] tracking-tight leading-tight">
                 {isSingleMode ? (
                   <>
-                    Register a New <br />
+                    Register a New{" "}
                     <span className="text-[#056BFC]">Candidate</span>
                   </>
                 ) : (
                   <>
-                    Share a <br />
+                    Share a{" "}
                     <span className="text-[#056BFC]">Bulk Test</span>
                   </>
                 )}
               </h2>
-              <p className="text-slate-500 leading-relaxed text-sm">
+              <p className="text-sm leading-6 text-slate-600">
                 {isSingleMode
                   ? "Use single invite when the candidate resume is available. The test uses resume, job description, common, and technical sections."
                   : "Use bulk sharing when resumes are not required. The test uses one job description plus common and aptitude sections."}
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm">
+            <div className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
               <Button
                 type="button"
                 variant={isSingleMode ? "default" : "ghost"}
-                className={`h-11 rounded-xl text-xs font-black ${isSingleMode ? "bg-[#056BFC] hover:bg-[#024099]" : "text-slate-600"}`}
+                className={`h-10 rounded-lg text-xs font-black ${isSingleMode ? "bg-[#056BFC] hover:bg-[#024099]" : "text-slate-600 hover:bg-slate-50"}`}
                 onClick={() => setMode("single")}
               >
                 <UserPlus className="mr-2 h-4 w-4" /> Single
@@ -408,14 +419,14 @@ export default function RecruiterPortal() {
               <Button
                 type="button"
                 variant={!isSingleMode ? "default" : "ghost"}
-                className={`h-11 rounded-xl text-xs font-black ${!isSingleMode ? "bg-[#056BFC] hover:bg-[#024099]" : "text-slate-600"}`}
+                className={`h-10 rounded-lg text-xs font-black ${!isSingleMode ? "bg-[#056BFC] hover:bg-[#024099]" : "text-slate-600 hover:bg-slate-50"}`}
                 onClick={() => setMode("bulk")}
               >
                 <Users className="mr-2 h-4 w-4" /> Bulk
               </Button>
             </div>
 
-            <div className="space-y-6">
+            <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
               {(isSingleMode
                 ? [
                     ["Enter Details", "Provide candidate details, resume, and job description."],
@@ -427,23 +438,23 @@ export default function RecruiterPortal() {
                     ["Set Level", "Choose easy, medium, or hard for the assessment."],
                     ["Add Emails and JD", "Candidates receive common/aptitude and JD-based technical questions."],
                   ]).map(([title, description], index) => (
-                <div key={title} className="flex gap-4 items-start">
-                  <div className="w-8 h-8 rounded-lg bg-white shadow-sm border flex items-center justify-center font-bold text-slate-400">{index + 1}</div>
+                <div key={title} className="flex gap-3 items-start">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-xs font-black text-slate-500">{index + 1}</div>
                   <div>
                     <p className="text-sm font-bold text-[#303030]">{title}</p>
-                    <p className="text-xs text-slate-500">{description}</p>
+                    <p className="mt-0.5 text-xs leading-5 text-slate-500">{description}</p>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          <Card className="lg:col-span-3 shadow-2xl border-none rounded-[2rem] overflow-hidden">
-            <CardHeader className="bg-white pb-8 pt-10 px-10">
+          <Card className="lg:col-span-8 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+            <CardHeader className="border-b border-slate-100 bg-white px-6 py-5">
               <CardTitle className="text-2xl font-black text-[#303030]">
                 {isSingleMode ? "Candidate Information" : "Bulk Test Sharing"}
               </CardTitle>
-              <CardDescription>
+              <CardDescription className="text-slate-500">
                 {isSingleMode
                   ? "Fill in the candidate details and upload both PDFs."
                   : "Enter test details, paste candidate emails, and upload one job description PDF."}
@@ -452,14 +463,16 @@ export default function RecruiterPortal() {
 
             {isSingleMode ? (
               <form onSubmit={handleSingleSubmit}>
-                <CardContent className="space-y-6 px-10">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <CardContent className="space-y-5 px-6 py-6">
+                  <div className={sectionClass}>
+                    <p className={sectionTitleClass}>Candidate Details</p>
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="name" className="text-xs font-bold text-slate-500">Full Name</Label>
                       <Input
                         id="name"
                         placeholder="e.g. Sarah Connor"
-                        className="h-12 rounded-xl bg-slate-50 border-none focus:bg-white transition-all"
+                        className={inputClass}
                         value={singleFormData.name}
                         onChange={(e) => setSingleFormData({ ...singleFormData, name: e.target.value })}
                         required
@@ -471,18 +484,22 @@ export default function RecruiterPortal() {
                         id="email"
                         type="email"
                         placeholder="sarah@corp.com"
-                        className="h-12 rounded-xl bg-slate-50 border-none focus:bg-white transition-all"
+                        className={inputClass}
                         value={singleFormData.email}
                         onChange={(e) => setSingleFormData({ ...singleFormData, email: e.target.value })}
                         required
                       />
                     </div>
+                    </div>
                   </div>
 
+                  <div className={sectionClass}>
+                    <p className={sectionTitleClass}>Assessment Setup</p>
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="role" className="text-xs font-bold text-slate-500">Interview Track / Role</Label>
                     <Select value={singleFormData.role} onValueChange={(v) => setSingleFormData({ ...singleFormData, role: v })}>
-                      <SelectTrigger className="h-12 rounded-xl bg-slate-50 border-none">
+                      <SelectTrigger className={selectTriggerClass}>
                         <SelectValue placeholder="Select a role" />
                       </SelectTrigger>
                       <SelectContent>
@@ -496,7 +513,7 @@ export default function RecruiterPortal() {
                   <div className="space-y-2">
                     <Label htmlFor="singleDifficulty" className="text-xs font-bold text-slate-500">Assessment Difficulty</Label>
                     <Select value={singleFormData.difficulty} onValueChange={(v) => setSingleFormData({ ...singleFormData, difficulty: v })}>
-                      <SelectTrigger id="singleDifficulty" className="h-12 rounded-xl bg-slate-50 border-none">
+                      <SelectTrigger id="singleDifficulty" className={selectTriggerClass}>
                         <SelectValue placeholder="Select difficulty" />
                       </SelectTrigger>
                       <SelectContent>
@@ -506,15 +523,19 @@ export default function RecruiterPortal() {
                       </SelectContent>
                     </Select>
                   </div>
+                    </div>
+                  </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div className={sectionClass}>
+                    <p className={sectionTitleClass}>Documents</p>
+                  <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="space-y-2">
                       <Label htmlFor="resume" className="text-xs font-bold text-slate-500">Candidate Resume PDF</Label>
                       <Input
                         id="resume"
                         type="file"
                         accept="application/pdf"
-                        className="h-12 rounded-xl bg-slate-50 border-none file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#056BFC]"
+                        className={fileInputClass}
                         onChange={(e) => setSingleResumeFile(e.target.files?.[0] || null)}
                         required
                       />
@@ -528,7 +549,7 @@ export default function RecruiterPortal() {
                         id="singleJobDescription"
                         type="file"
                         accept="application/pdf"
-                        className="h-12 rounded-xl bg-slate-50 border-none file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#056BFC]"
+                        className={fileInputClass}
                         onChange={(e) => setSingleJobDescriptionFile(e.target.files?.[0] || null)}
                         required
                       />
@@ -537,22 +558,26 @@ export default function RecruiterPortal() {
                       ) : null}
                     </div>
                   </div>
+                  </div>
                 </CardContent>
-                <CardFooter className="p-10 bg-slate-50/50">
-                  <Button type="submit" className="w-full h-16 text-xl font-black bg-[#056BFC] hover:bg-[#024099] rounded-2xl shadow-xl hover:translate-y-[-2px] transition-all" disabled={isLoading}>
+                <CardFooter className="border-t border-slate-100 bg-slate-50 px-6 py-5">
+                  <Button type="submit" className="h-12 w-full rounded-lg bg-[#056BFC] text-base font-black hover:bg-[#024099]" disabled={isLoading}>
                     {isLoading ? <><Loader2 className="mr-3 h-6 w-6 animate-spin" /> Registering...</> : "Generate Interview Link"}
                   </Button>
                 </CardFooter>
               </form>
             ) : (
               <form onSubmit={handleBulkSubmit}>
-                <CardContent className="space-y-6 px-10">
+                <CardContent className="space-y-5 px-6 py-6">
+                  <div className={sectionClass}>
+                    <p className={sectionTitleClass}>Assessment Setup</p>
+                    <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="testName" className="text-xs font-bold text-slate-500">Test Name</Label>
                     <Input
                       id="testName"
                       placeholder="e.g. Java Developer Assessment"
-                      className="h-12 rounded-xl bg-slate-50 border-none focus:bg-white transition-all"
+                      className={inputClass}
                       value={bulkFormData.testName}
                       onChange={(e) => setBulkFormData({ ...bulkFormData, testName: e.target.value })}
                       required
@@ -562,7 +587,7 @@ export default function RecruiterPortal() {
                   <div className="space-y-2">
                     <Label htmlFor="bulkDifficulty" className="text-xs font-bold text-slate-500">Level</Label>
                     <Select value={bulkFormData.difficulty} onValueChange={(v) => setBulkFormData({ ...bulkFormData, difficulty: v })}>
-                      <SelectTrigger id="bulkDifficulty" className="h-12 rounded-xl bg-slate-50 border-none">
+                      <SelectTrigger id="bulkDifficulty" className={selectTriggerClass}>
                         <SelectValue placeholder="Select level" />
                       </SelectTrigger>
                       <SelectContent>
@@ -572,16 +597,19 @@ export default function RecruiterPortal() {
                       </SelectContent>
                     </Select>
                   </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <Label htmlFor="emails" className="text-xs font-bold text-slate-500">Candidate Email IDs</Label>
-                      <span className="text-[11px] font-bold text-[#056BFC]">{bulkEmailCount} entered</span>
                     </div>
+                  </div>
+
+                  <div className={sectionClass}>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className={sectionTitleClass}>Candidates</p>
+                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-[#056BFC]">{bulkEmailCount} entered</span>
+                    </div>
+                    <Label htmlFor="emails" className="mt-4 block text-xs font-bold text-slate-500">Candidate Email IDs</Label>
                     <Textarea
                       id="emails"
                       placeholder={"candidate.one@company.com\ncandidate.two@company.com\ncandidate.three@company.com"}
-                      className="min-h-36 rounded-xl bg-slate-50 border-none focus:bg-white transition-all"
+                      className="mt-2 min-h-36 rounded-lg border border-slate-200 bg-white focus-visible:ring-2 focus-visible:ring-[#056BFC]/20"
                       value={bulkFormData.emails}
                       onChange={(e) => setBulkFormData({ ...bulkFormData, emails: e.target.value })}
                       required
@@ -589,13 +617,15 @@ export default function RecruiterPortal() {
                     <p className="text-[11px] text-slate-500">Separate emails with a new line, comma, semicolon, or space.</p>
                   </div>
 
-                  <div className="space-y-2">
+                  <div className={sectionClass}>
+                    <p className={sectionTitleClass}>Documents</p>
+                    <div className="mt-4 space-y-2">
                     <Label htmlFor="bulkJobDescription" className="text-xs font-bold text-slate-500">Job Description PDF</Label>
                     <Input
                       id="bulkJobDescription"
                       type="file"
                       accept="application/pdf"
-                      className="h-12 rounded-xl bg-slate-50 border-none file:mr-3 file:rounded-lg file:border-0 file:bg-white file:px-3 file:py-1.5 file:text-xs file:font-bold file:text-[#056BFC]"
+                      className={fileInputClass}
                       onChange={(e) => setBulkJobDescriptionFile(e.target.files?.[0] || null)}
                       required
                     />
@@ -603,9 +633,10 @@ export default function RecruiterPortal() {
                       <p className="flex items-center gap-1 text-[11px] font-medium text-slate-500"><FileText className="h-3 w-3" /> {bulkJobDescriptionFile.name}</p>
                     ) : null}
                   </div>
+                  </div>
                 </CardContent>
-                <CardFooter className="p-10 bg-slate-50/50">
-                  <Button type="submit" className="w-full h-16 text-xl font-black bg-[#056BFC] hover:bg-[#024099] rounded-2xl shadow-xl hover:translate-y-[-2px] transition-all" disabled={isLoading}>
+                <CardFooter className="border-t border-slate-100 bg-slate-50 px-6 py-5">
+                  <Button type="submit" className="h-12 w-full rounded-lg bg-[#056BFC] text-base font-black hover:bg-[#024099]" disabled={isLoading}>
                     {isLoading ? <><Loader2 className="mr-3 h-6 w-6 animate-spin" /> Sharing...</> : "Share Bulk Test"}
                   </Button>
                 </CardFooter>
@@ -615,7 +646,7 @@ export default function RecruiterPortal() {
         </div>
       </main>
 
-      <footer className="py-8 text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+      <footer className="py-6 text-center text-[10px] font-bold text-slate-400 uppercase tracking-widest">
         Authorized TAG Access Only &bull; &copy; 2026 Aura Technologies
       </footer>
     </div>

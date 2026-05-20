@@ -6,7 +6,7 @@ import { analyzeFrameWithAzure } from "@/lib/azure-vision-proctor";
 import { z } from "zod";
 import crypto from "crypto";
 import { db } from "@/lib/db";
-import { getInterviewQuestionSetForRole, getQuestionListForRole } from "@/lib/interview-constants";
+import { getInterviewQuestionSetForRole, getQuestionListForRole, getTechnicalQuestionPool } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
 import type { ReviewerScorecard } from "@/lib/types";
 
@@ -399,40 +399,27 @@ function compactDocumentText(text: string, maxLength = 3500) {
     return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
-function buildJobDescriptionQuestionBank(role: string, jobDescriptionText: string) {
-    const jd = compactDocumentText(jobDescriptionText);
-    const context = jd
-        ? `The job description for this ${role} test includes these expectations: ${jd}.`
-        : `Use practical expectations for the ${role} test.`;
+function buildJobDescriptionQuestionBank(role: string, _jobDescriptionText: string) {
+    const technicalQuestions = getTechnicalQuestionPool(role)
+        .slice(0, 5)
+        .map((question) => `[technical] ${question}`);
 
-    return [
-        `[technical] ${context} Which requirements are most important for success, and how would you approach them?`,
-        `[technical] Based on this job description, describe how you would handle one core responsibility end to end.`,
-        `[technical] Pick a technology, domain, or responsibility from the job description and explain your hands-on depth with it.`,
-        `[technical] What risks, trade-offs, or quality concerns would you watch for while doing the work described here?`,
-        `[technical] How would you measure whether you delivered the outcomes expected in this job description?`,
-    ].join("\n");
+    return ["[no_resume_projects]", ...technicalQuestions].join("\n");
 }
 
 function buildCandidateQuestionBank(role: string, resumeText: string, jobDescriptionText: string) {
     const resume = compactDocumentText(resumeText);
     const jd = compactDocumentText(jobDescriptionText);
 
-    const technicalQuestions = jd
-        ? [
-            `[technical] The job description for this ${role} role includes these expectations: ${jd}. Which of these requirements best matches your experience, and can you walk through a concrete example?`,
-            `[technical] Based on the job description, describe how you would approach one of the core responsibilities end to end in a production setting.`,
-            `[technical] Pick a technology, platform, or responsibility mentioned in the job description and explain your depth of hands-on experience with it.`,
-            `[technical] What risks or trade-offs would you watch for while delivering the kind of work described in this job description?`,
-            `[technical] How would you measure success for the main responsibilities described in this job description?`,
-        ]
-        : [];
+    const technicalQuestions = getTechnicalQuestionPool(role)
+        .slice(0, 5)
+        .map((question) => `[technical] ${question}`);
 
-    const resumeQuestions = resume
+    const resumeQuestions = resume || jd
         ? [
-            `[resume_projects] Your resume includes this background: ${resume}. Walk me through the most relevant project for this role, including the business problem, your responsibilities, and the outcome.`,
-            `[resume_projects] From your resume, choose a project where you personally solved a difficult technical or delivery challenge. What happened and what did you do?`,
-            `[resume_projects] Looking at your resume experience, what is one project or achievement you would improve if you had to do it again, and why?`,
+            `[resume_projects] Choose the project from your resume that is most relevant to this ${role} role. Walk me through the architecture, your responsibilities, and the technical outcome.`,
+            `[resume_projects] From one of your resume projects, explain the toughest technical problem you personally solved, including the constraints and trade-offs.`,
+            `[resume_projects] Pick a resume project where quality, scale, performance, or reliability mattered. What technical decisions did you make, and what would you improve now?`,
         ]
         : [];
 
@@ -488,10 +475,15 @@ export async function generateAndSaveSummaryReport(interviewId: string) {
         [JSON.stringify(report), report.overallScore ?? 0, interviewId]
     );
 
-    // Export the generated HTML report to Azure Storage.
-    await uploadReportToAzure(interviewId, report, session);
+    let storageWarning: string | undefined;
+    try {
+      await uploadReportToAzure(interviewId, report, session);
+    } catch (storageError) {
+      storageWarning = storageError instanceof Error ? storageError.message : String(storageError);
+      console.error("Report generated and saved, but Azure report upload failed:", storageError);
+    }
 
-    return { success: true, data: report };
+    return { success: true, data: report, storageWarning };
   } catch (error) {
     console.error("Error generating or saving summary report:", error);
     const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
@@ -690,10 +682,10 @@ async function sendCandidateInvitationEmail(input: {
             ].join("\n"),
             html: `
                 <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6; max-width: 640px;">
-                    <div style="background: #056BFC; padding: 18px 22px; border-radius: 14px 14px 0 0;">
-                        ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="ValueMomentum" style="height: 34px; width: auto; display: block;" />` : `<div style="color: white; font-size: 20px; font-weight: 800;">ValueMomentum</div>`}
+                    <div style="padding: 0 0 18px 0;">
+                        ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="ValueMomentum" style="height: 34px; width: auto; display: block;" />` : `<div style="color: #0f172a; font-size: 20px; font-weight: 800;">ValueMomentum</div>`}
                     </div>
-                    <div style="border: 1px solid #e2e8f0; border-top: 0; padding: 24px; border-radius: 0 0 14px 14px;">
+                    <div style="border: 1px solid #e2e8f0; padding: 24px; border-radius: 14px;">
                     <div style="font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: #056BFC; font-weight: 800;">Aura Interview</div>
                     <h2 style="margin: 8px 0 12px 0;">ValueMomentum Interview Invitation</h2>
                     <p>Hello ${escapeHtml(input.candidateName)},</p>

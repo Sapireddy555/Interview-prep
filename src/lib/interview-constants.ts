@@ -201,7 +201,7 @@ function buildResumeProjectQuestions(projects: ResumeProject[]): string[] {
   return resumeQuestions.slice(0, RESUME_PROJECT_QUESTION_COUNT);
 }
 
-function getTechnicalQuestionPool(role: string): string[] {
+export function getTechnicalQuestionPool(role: string): string[] {
   const technicalQuestionsByRole: Record<string, string[]> = {
     "Generative AI Engineer": GEN_AI_TECHNICAL_QUESTIONS,
     "Gen AI Engineer": GEN_AI_TECHNICAL_QUESTIONS,
@@ -213,7 +213,18 @@ function getTechnicalQuestionPool(role: string): string[] {
     "Software Engineer": SOFTWARE_ENGINEER_TECHNICAL_QUESTIONS,
   };
 
-  return technicalQuestionsByRole[role] || technicalQuestionsByRole["Software Engineer"];
+  if (technicalQuestionsByRole[role]) return technicalQuestionsByRole[role];
+
+  const normalizedRole = role.toLowerCase();
+  if (normalizedRole.includes("react")) return REACT_TECHNICAL_QUESTIONS;
+  if (normalizedRole.includes("java")) return JAVA_TECHNICAL_QUESTIONS;
+  if (normalizedRole.includes(".net") || normalizedRole.includes("dotnet")) return DOTNET_TECHNICAL_QUESTIONS;
+  if (normalizedRole.includes("devops") || normalizedRole.includes("dev ops")) return DEVOPS_TECHNICAL_QUESTIONS;
+  if (normalizedRole.includes("gen ai") || normalizedRole.includes("generative ai") || normalizedRole.includes("llm")) {
+    return GEN_AI_TECHNICAL_QUESTIONS;
+  }
+
+  return technicalQuestionsByRole["Software Engineer"];
 }
 
 function normalizeQuestionBank(questionBank?: string | string[]): string[] {
@@ -236,8 +247,14 @@ function splitQuestionBankBySection(questionBank?: string | string[]) {
     technical: [],
     resume_projects: [],
   };
+  let skipResumeProjects = false;
 
   for (const question of questions) {
+    if (/^\[(no_resume_projects|jd_only)\]/i.test(question)) {
+      skipResumeProjects = true;
+      continue;
+    }
+
     const sectionMatch = question.match(/^\[(technical|resume_projects)\]\s*(.+)$/i);
     if (sectionMatch) {
       const sectionId = sectionMatch[1].toLowerCase() as "technical" | "resume_projects";
@@ -247,7 +264,7 @@ function splitQuestionBankBySection(questionBank?: string | string[]) {
     }
   }
 
-  return { ...sections, hasCustomQuestionBank: questions.length > 0 };
+  return { ...sections, hasCustomQuestionBank: questions.length > 0, skipResumeProjects };
 }
 
 export function getInterviewQuestionSetForRole(role: string, questionBank?: string | string[]): InterviewQuestion[] {
@@ -259,7 +276,7 @@ export function getInterviewQuestionSetForRole(role: string, questionBank?: stri
   const resumeProjectQuestions =
     customQuestions.resume_projects.length > 0
       ? customQuestions.resume_projects.slice(0, RESUME_PROJECT_QUESTION_COUNT)
-      : customQuestions.hasCustomQuestionBank
+      : customQuestions.skipResumeProjects
         ? []
         : buildResumeProjectQuestions(DEMO_RESUME_PROJECTS);
 
