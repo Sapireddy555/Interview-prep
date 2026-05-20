@@ -801,6 +801,7 @@ export function InterviewView() {
                         .slice(0, Math.max(0, currentQuestionIndex))
                         .filter((question) => question.sectionId === sectionId).length;
                       const totalCount = questionListState.filter((question) => question.sectionId === sectionId).length;
+                      if (totalCount === 0) return null;
                       const isActiveSection = currentSectionTitle === sectionTitle;
                       const isCompletedSection = totalCount > 0 && completedCount >= totalCount && !isActiveSection;
                       const sectionTone = isCompletedSection

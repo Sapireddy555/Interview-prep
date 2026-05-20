@@ -74,7 +74,7 @@ const analysisPrompt = ai.definePrompt({
   output: { schema: FullInterviewAnalysisOutputSchema },
   prompt: `You are a Senior Principal Interviewer conducting a post-interview debrief for the role of {{{role}}}.
   
-  You have just finished a three-section interview. Below is the full transcript of the conversation.
+  You have just finished an interview. Below is the full transcript of the conversation.
   
   TRANSCRIPT:
   {{#each transcript}}
@@ -83,15 +83,15 @@ const analysisPrompt = ai.definePrompt({
   
   YOUR TASK:
   Perform a deep-dive analysis of the candidate's performance.
-  1. Evaluate the candidate across the three interview sections:
+  1. Evaluate the candidate across only the sections present in the transcript:
      - Communication and Attitude
      - Technical Questions
-     - Resume Projects
+     - Resume Projects, only when resume-project questions were actually asked
   2. Evaluate technical depth based on their answers.
   3. Assess communication clarity, professionalism, and attitude.
   4. Identify specific patterns in their strengths and gaps.
   5. Provide specific feedback and a score (0-100) for EACH question in the transcript.
-  6. Provide section-by-section feedback with score, summary, strengths, and improvements.
+  6. Provide section-by-section feedback with score, summary, strengths, and improvements for sections that appear in the transcript.
   7. Provide a final overall score (0-100) and a clear hiring recommendation.
   8. Provide a competency-based rubric with scores (0-100) and concrete evidence quotes/paraphrases from the transcript.
   9. Set htmlReport to an empty string.
@@ -160,7 +160,7 @@ Rules:
 - Return JSON only.
 - Set htmlReport to an empty string.
 - Score every question asked by the interviewer.
-- Include all three section IDs when enough transcript context exists.
+- Include only section IDs that appear in the transcript. Do not invent Resume Projects feedback when no resume-project questions were asked.
 - Use concrete transcript evidence where possible.`;
 }
 

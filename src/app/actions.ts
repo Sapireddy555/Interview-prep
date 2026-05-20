@@ -258,6 +258,92 @@ export async function registerCandidateAction(formData: FormData) {
     }
 }
 
+export async function registerBulkJobDescriptionTestAction(formData: FormData) {
+    const testName = String(formData.get("testName") || "").trim();
+    const difficulty = String(formData.get("difficulty") || "medium").trim();
+    const emailText = String(formData.get("emails") || "").trim();
+    const jobDescription = formData.get("jobDescription");
+    const emails = parseBulkEmailList(emailText);
+
+    if (!testName || !difficulty || emails.length === 0) {
+        return { success: false, error: "Test name, level, and at least one candidate email are required." };
+    }
+
+    if (emails.invalid.length > 0) {
+        return { success: false, error: `Invalid email address: ${emails.invalid[0]}` };
+    }
+
+    if (!(jobDescription instanceof File) || jobDescription.size === 0 || jobDescription.type !== "application/pdf") {
+        return { success: false, error: "Job description must be uploaded as a PDF." };
+    }
+
+    const batchId = `BULK-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+
+    try {
+        const [jdUpload, jobDescriptionText] = await Promise.all([
+            uploadCandidateDocumentToAzure(batchId, jobDescription, "job-description"),
+            extractTextWithADI(jobDescription),
+        ]);
+        const questionBank = buildJobDescriptionQuestionBank(testName, jobDescriptionText);
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://interview-prep-ucdu.onrender.com";
+        const invitations = [];
+
+        for (const email of emails.valid) {
+            const uniqueId = await createUniqueCandidateId();
+            const candidateName = formatCandidateNameFromEmail(email);
+
+            await db.query(
+                `INSERT INTO candidates (
+                    id, name, email, role, difficulty, resume_url, resume_file_name,
+                    job_description_url, job_description_file_name, resume_text, job_description_text, question_bank
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                [
+                    uniqueId,
+                    candidateName,
+                    email,
+                    testName,
+                    difficulty,
+                    null,
+                    null,
+                    jdUpload.url,
+                    jobDescription.name,
+                    "",
+                    jobDescriptionText,
+                    questionBank,
+                ]
+            );
+
+            const interviewLink = `${baseUrl}/login?id=${uniqueId}`;
+            const emailResult = await sendCandidateInvitationEmail({
+                candidateName,
+                candidateEmail: email,
+                uniqueId,
+                interviewLink,
+                role: testName,
+            });
+
+            invitations.push({
+                id: uniqueId,
+                link: interviewLink,
+                name: candidateName,
+                email,
+                emailSent: emailResult.success,
+                emailError: emailResult.error,
+            });
+        }
+
+        return {
+            success: true,
+            testName,
+            count: invitations.length,
+            invitations,
+        };
+    } catch (error) {
+        console.error("Error registering bulk job-description test:", error);
+        return { success: false, error: String(error) };
+    }
+}
+
 async function createUniqueCandidateId() {
     for (let attempt = 0; attempt < 5; attempt++) {
         const uniqueId = `AURA-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
@@ -268,8 +354,62 @@ async function createUniqueCandidateId() {
     throw new Error("Unable to generate a unique candidate ID.");
 }
 
+function parseBulkEmailList(value: string) {
+    const seen = new Set<string>();
+    const entries = value
+        .split(/[\s,;]+/)
+        .map((email) => email.trim().toLowerCase())
+        .filter(Boolean);
+    const valid: string[] = [];
+    const invalid: string[] = [];
+
+    for (const email of entries) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            invalid.push(email);
+            continue;
+        }
+
+        if (!seen.has(email)) {
+            seen.add(email);
+            valid.push(email);
+        }
+    }
+
+    return { valid, invalid, length: valid.length };
+}
+
+function formatCandidateNameFromEmail(email: string) {
+    const localPart = email.split("@")[0] || "Candidate";
+    const words = localPart
+        .replace(/[._-]+/g, " ")
+        .split(/\s+/)
+        .map((word) => word.trim())
+        .filter(Boolean);
+
+    if (words.length === 0) return "Candidate";
+
+    return words
+        .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(" ");
+}
+
 function compactDocumentText(text: string, maxLength = 3500) {
     return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function buildJobDescriptionQuestionBank(role: string, jobDescriptionText: string) {
+    const jd = compactDocumentText(jobDescriptionText);
+    const context = jd
+        ? `The job description for this ${role} test includes these expectations: ${jd}.`
+        : `Use practical expectations for the ${role} test.`;
+
+    return [
+        `[technical] ${context} Which requirements are most important for success, and how would you approach them?`,
+        `[technical] Based on this job description, describe how you would handle one core responsibility end to end.`,
+        `[technical] Pick a technology, domain, or responsibility from the job description and explain your hands-on depth with it.`,
+        `[technical] What risks, trade-offs, or quality concerns would you watch for while doing the work described here?`,
+        `[technical] How would you measure whether you delivered the outcomes expected in this job description?`,
+    ].join("\n");
 }
 
 function buildCandidateQuestionBank(role: string, resumeText: string, jobDescriptionText: string) {

@@ -15,7 +15,7 @@ type ResumeProject = {
 };
 
 export const INTERVIEW_SECTION_TITLES: Record<InterviewSectionId, string> = {
-  communication: "Communication and Attitude",
+  communication: "Communication and Aptitude",
   technical: "Technical Questions",
   resume_projects: "Resume Projects",
 };
@@ -247,7 +247,7 @@ function splitQuestionBankBySection(questionBank?: string | string[]) {
     }
   }
 
-  return sections;
+  return { ...sections, hasCustomQuestionBank: questions.length > 0 };
 }
 
 export function getInterviewQuestionSetForRole(role: string, questionBank?: string | string[]): InterviewQuestion[] {
@@ -259,7 +259,9 @@ export function getInterviewQuestionSetForRole(role: string, questionBank?: stri
   const resumeProjectQuestions =
     customQuestions.resume_projects.length > 0
       ? customQuestions.resume_projects.slice(0, RESUME_PROJECT_QUESTION_COUNT)
-      : buildResumeProjectQuestions(DEMO_RESUME_PROJECTS);
+      : customQuestions.hasCustomQuestionBank
+        ? []
+        : buildResumeProjectQuestions(DEMO_RESUME_PROJECTS);
 
   return [
     ...createSectionQuestions("communication", COMMUNICATION_AND_ATTITUDE_QUESTIONS),
