@@ -168,10 +168,11 @@ function SelfieVerificationContent() {
       }, 2500);
     } catch (error) {
       toast({
-        title: "Selfie verification setup failed",
+        title: "Selfie not accepted",
         description: error instanceof Error ? error.message : "Please try again.",
         variant: "destructive",
       });
+      setCapturedSelfie(null);
       setIsCapturing(false);
     }
   };
@@ -292,7 +293,7 @@ function SelfieVerificationContent() {
                 <Info className="h-4 w-4" />
                 <AlertTitle>Selfie quality matters</AlertTitle>
                 <AlertDescription>
-                  Face the camera directly, keep your face inside the oval, use good lighting, and make sure only you are visible.
+                  Face the camera directly, keep your face inside the oval, use good lighting, and make sure only you are visible. Aura will check that exactly one face is detectable before saving.
                 </AlertDescription>
               </Alert>
             </div>

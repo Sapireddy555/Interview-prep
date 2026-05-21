@@ -198,6 +198,8 @@ export async function storeCandidateSelfieAction(input: { candidateId: string; i
             return { success: false, error: "Selfie must be an image." };
         }
 
+        await ensureSingleFaceDetectedWithAzureFace(image.buffer, "Reference selfie");
+
         const upload = await uploadCandidateSelfieToAzure(candidateId, image.buffer, image.contentType);
         await db.query(
             `UPDATE candidates
@@ -735,7 +737,7 @@ async function downloadCandidateSelfieFromAzure(blobName: string) {
     return Buffer.from(await blockBlobClient.downloadToBuffer());
 }
 
-async function detectFaceIdWithAzureFace(image: Buffer) {
+function getAzureFaceConfig() {
     const endpoint = (process.env.AZURE_FACE_ENDPOINT || "").replace(/\/$/, "");
     const key = process.env.AZURE_FACE_KEY || process.env.AZURE_FACE_API_KEY || "";
 
@@ -743,13 +745,47 @@ async function detectFaceIdWithAzureFace(image: Buffer) {
         throw new Error("Azure Face API is not configured.");
     }
 
+    return { endpoint, key };
+}
+
+async function fetchWithTimeout(url: string | URL, init: RequestInit, timeoutMs = Number(process.env.AZURE_FACE_TIMEOUT_MS || "15000")) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+        return await fetch(url, {
+            ...init,
+            signal: controller.signal,
+        });
+    } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+            throw new Error(`Azure Face API request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+function formatAzureFaceError(status: number, errorText: string) {
+    if (status === 401 || status === 403) {
+        return `Azure Face API access denied (${status}). Check the Face API key, endpoint, region, and Limited Access approval for face verification.`;
+    }
+
+    return `Azure Face API failed (${status}): ${errorText}`;
+}
+
+async function detectFacesWithAzureFace(image: Buffer, returnFaceId: boolean) {
+    const { endpoint, key } = getAzureFaceConfig();
     const url = new URL(`${endpoint}/face/v1.0/detect`);
-    url.searchParams.set("returnFaceId", "true");
+    url.searchParams.set("returnFaceId", String(returnFaceId));
     url.searchParams.set("recognitionModel", "recognition_04");
     url.searchParams.set("detectionModel", "detection_03");
-    url.searchParams.set("faceIdTimeToLive", "120");
+    if (returnFaceId) {
+        url.searchParams.set("faceIdTimeToLive", "120");
+    }
 
-    const response = await fetch(url, {
+    const response = await fetchWithTimeout(url, {
         method: "POST",
         headers: {
             "Ocp-Apim-Subscription-Key": key,
@@ -760,31 +796,43 @@ async function detectFaceIdWithAzureFace(image: Buffer) {
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Azure Face detect failed (${response.status}): ${errorText}`);
+        throw new Error(formatAzureFaceError(response.status, errorText));
     }
 
-    const faces = await response.json();
+    return await response.json();
+}
+
+async function ensureSingleFaceDetectedWithAzureFace(image: Buffer, label: string) {
+    const faces = await detectFacesWithAzureFace(image, false);
+    if (!Array.isArray(faces) || faces.length === 0) {
+        throw new Error(`${label}: no face was detected. Please face the camera directly in good lighting.`);
+    }
+    if (faces.length > 1) {
+        throw new Error(`${label}: multiple faces were detected. Please ensure only the candidate is visible.`);
+    }
+}
+
+async function detectFaceIdWithAzureFace(image: Buffer, label: string) {
+    const faces = await detectFacesWithAzureFace(image, true);
     if (!Array.isArray(faces) || faces.length !== 1 || !faces[0]?.faceId) {
-        throw new Error(faces?.length > 1 ? "Multiple faces detected. Please ensure only the candidate is visible." : "No face detected.");
+        if (Array.isArray(faces) && faces.length > 1) {
+            throw new Error(`${label}: multiple faces were detected. Please ensure only the candidate is visible.`);
+        }
+        throw new Error(`${label}: no face was detected. Please face the camera directly in good lighting.`);
     }
 
     return faces[0].faceId as string;
 }
 
 async function verifyFacesWithAzureFace(referenceImage: Buffer, liveImage: Buffer) {
-    const endpoint = (process.env.AZURE_FACE_ENDPOINT || "").replace(/\/$/, "");
-    const key = process.env.AZURE_FACE_KEY || process.env.AZURE_FACE_API_KEY || "";
-
-    if (!endpoint || !key) {
-        throw new Error("Azure Face API is not configured.");
-    }
+    const { endpoint, key } = getAzureFaceConfig();
 
     const [referenceFaceId, liveFaceId] = await Promise.all([
-        detectFaceIdWithAzureFace(referenceImage),
-        detectFaceIdWithAzureFace(liveImage),
+        detectFaceIdWithAzureFace(referenceImage, "Reference selfie"),
+        detectFaceIdWithAzureFace(liveImage, "Live camera image"),
     ]);
 
-    const response = await fetch(`${endpoint}/face/v1.0/verify`, {
+    const response = await fetchWithTimeout(`${endpoint}/face/v1.0/verify`, {
         method: "POST",
         headers: {
             "Ocp-Apim-Subscription-Key": key,
@@ -795,7 +843,7 @@ async function verifyFacesWithAzureFace(referenceImage: Buffer, liveImage: Buffe
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Azure Face verify failed (${response.status}): ${errorText}`);
+        throw new Error(formatAzureFaceError(response.status, errorText));
     }
 
     const result = await response.json();
