@@ -8,7 +8,6 @@ import { getInterviewQuestionSetForRole, INTERVIEW_SECTION_TITLES } from "@/lib/
 import type { InterviewQuestion } from "@/lib/interview-constants";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckCircle, MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
 import type { InterviewSettings, Message, SecurityEvent } from "@/lib/types";
@@ -172,7 +171,7 @@ export function InterviewView() {
     setDraftResponse(text.trim());
   }, []);
 
-  const { isListening, isSpeaking, isVoiceEnabled, toggleVoice, startContinuous, stopContinuous, resetTranscript } =
+  const { isListening, isSpeaking, isVoiceEnabled, currentTranscript, toggleVoice, startContinuous, stopContinuous, resetTranscript } =
     useAzureSpeech(onFinalResult, toast);
 
   const runProctoring = useCallback(async () => {
@@ -1022,12 +1021,13 @@ export function InterviewView() {
                     </Button>
                   </div>
                   <div className="mt-2">
-                    <Textarea
-                      value={draftResponse}
-                      onChange={(event) => setDraftResponse(event.target.value)}
-                      placeholder="Your recorded response will appear here. You can edit it before submitting."
-                      className="min-h-20 rounded-lg border-slate-200 resize-none text-xs"
-                    />
+                    <div className="min-h-20 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-800">
+                      {(currentTranscript || draftResponse).trim() ? (
+                        <p className="whitespace-pre-wrap">{currentTranscript || draftResponse}</p>
+                      ) : (
+                        <p className="text-slate-400">Your recorded transcript will appear here after you speak.</p>
+                      )}
+                    </div>
                   </div>
                   <p className="mt-1.5 text-[10px] text-muted-foreground">
                     Use Record to capture audio, then Submit Answer to continue.

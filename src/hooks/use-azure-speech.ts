@@ -11,7 +11,7 @@ export interface SpeechHookResult {
   toggleVoice: () => void;
   speak: (text: string) => void;
   startContinuous: () => void;
-  stopContinuous: () => void;
+  stopContinuous: () => Promise<string>;
   resetTranscript: () => void;
 }
 
@@ -25,26 +25,53 @@ export const useAzureSpeech = (
   const [currentTranscript, setCurrentTranscript] = useState("");
   
   const recognizerRef = useRef<SpeechSDK.SpeechRecognizer | null>(null);
-  const accumulatedTranscriptRef = useRef<string>("");
+  const transcriptSegmentsRef = useRef<string[]>([]);
+  const partialTranscriptRef = useRef<string>("");
   const isStartingRef = useRef<boolean>(false);
 
   const resetTranscript = useCallback(() => {
-    accumulatedTranscriptRef.current = "";
+    transcriptSegmentsRef.current = [];
+    partialTranscriptRef.current = "";
     setCurrentTranscript("");
   }, []);
 
   const stopContinuous = useCallback(() => {
-    if (recognizerRef.current) {
-      recognizerRef.current.stopContinuousRecognitionAsync(() => {
-        setIsListening(false);
-        recognizerRef.current = null;
-      });
-    }
+    const buildFinalTranscript = () => {
+      const parts = [...transcriptSegmentsRef.current];
+      const partial = partialTranscriptRef.current.trim();
+      if (partial && parts[parts.length - 1] !== partial) {
+        parts.push(partial);
+      }
+      return parts.map((part) => part.trim()).filter(Boolean).join(" ").trim();
+    };
 
-    const finalTranscript = accumulatedTranscriptRef.current.trim();
-    if (finalTranscript.length > 0) {
-      onFinalResult(finalTranscript);
-    }
+    return new Promise<string>((resolve) => {
+      const finalize = () => {
+        const finalTranscript = buildFinalTranscript();
+        if (finalTranscript.length > 0) {
+          onFinalResult(finalTranscript);
+          setCurrentTranscript(finalTranscript);
+        }
+        resolve(finalTranscript);
+      };
+
+      if (recognizerRef.current) {
+        const recognizer = recognizerRef.current;
+        recognizer.stopContinuousRecognitionAsync(() => {
+          setIsListening(false);
+          recognizerRef.current = null;
+          window.setTimeout(finalize, 150);
+        }, () => {
+          setIsListening(false);
+          recognizerRef.current = null;
+          finalize();
+        });
+        return;
+      }
+
+        setIsListening(false);
+      finalize();
+    });
   }, [onFinalResult]);
 
   const startContinuous = useCallback(async () => {
@@ -58,12 +85,17 @@ export const useAzureSpeech = (
 
       const speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
       speechConfig.speechRecognitionLanguage = "en-US";
+      speechConfig.outputFormat = SpeechSDK.OutputFormat.Detailed;
+      speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "10000");
+      speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "1800");
+      speechConfig.setProperty("Speech_SegmentationSilenceTimeoutMs", "1800");
 
       const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
       const recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
 
       recognizer.recognizing = (s, e) => {
-        const partialTranscript = [accumulatedTranscriptRef.current, e.result.text]
+        partialTranscriptRef.current = e.result.text || "";
+        const partialTranscript = [...transcriptSegmentsRef.current, partialTranscriptRef.current]
           .map((part) => part.trim())
           .filter(Boolean)
           .join(" ");
@@ -72,11 +104,13 @@ export const useAzureSpeech = (
 
       recognizer.recognized = (s, e) => {
         if (e.result.reason === SpeechSDK.ResultReason.RecognizedSpeech) {
-          accumulatedTranscriptRef.current = [accumulatedTranscriptRef.current, e.result.text]
-            .map((part) => part.trim())
-            .filter(Boolean)
-            .join(" ");
-          setCurrentTranscript(accumulatedTranscriptRef.current);
+          const text = (e.result.text || "").trim();
+          if (text) {
+            transcriptSegmentsRef.current.push(text);
+            partialTranscriptRef.current = "";
+            setCurrentTranscript(transcriptSegmentsRef.current.join(" "));
+            onFinalResult(transcriptSegmentsRef.current.join(" "));
+          }
         }
       };
 
@@ -103,7 +137,7 @@ export const useAzureSpeech = (
     if (!isVoiceEnabled || !window.speechSynthesis) return;
     
     // Stop listening while AI is speaking to avoid feedback loop
-    stopContinuous();
+    void stopContinuous();
 
     const utterance = new SpeechSynthesisUtterance(text);
     
@@ -144,7 +178,7 @@ export const useAzureSpeech = (
 
   useEffect(() => {
     return () => {
-      stopContinuous();
+      void stopContinuous();
     };
   }, [stopContinuous]);
 
