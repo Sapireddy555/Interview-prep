@@ -38,6 +38,7 @@ export function InterviewView() {
   const [identityStatus, setIdentityStatus] = useState<"not_required" | "pending" | "verifying" | "matched" | "failed">("pending");
   const [identityMessage, setIdentityMessage] = useState("");
   const [showIdentityMatchedPopup, setShowIdentityMatchedPopup] = useState(false);
+  const [isCompletingInterview, setIsCompletingInterview] = useState(false);
   const [consents, setConsents] = useState({
     integrity: false,
     devices: false,
@@ -46,6 +47,7 @@ export function InterviewView() {
   const [draftResponse, setDraftResponse] = useState("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const candidateIdRef = useRef<string | null>(null);
   const interviewStartTime = useRef<Date | null>(null);
   const proctoringIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const devtoolsIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -61,6 +63,7 @@ export function InterviewView() {
   const timerRef = useRef<number | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const autoCloseTimeoutRef = useRef<number | null>(null);
+  const completionStartedRef = useRef(false);
 
   const closeInterviewWindow = useCallback(() => {
     window.open("", "_self");
@@ -214,6 +217,7 @@ export function InterviewView() {
                     try {
                       const formData = new FormData();
                       formData.append("interviewId", interviewId);
+                      if (candidateId) formData.append("candidateId", candidateId);
                       formData.append("timestamp", timestamp);
                       formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
                       await uploadViolationScreenshot(formData);
@@ -232,7 +236,7 @@ export function InterviewView() {
         }
       }
     }
-  }, [addSecurityEvent, getRelativeTimestamp, toast, interviewId]);
+  }, [addSecurityEvent, candidateId, getRelativeTimestamp, toast, interviewId]);
 
   const startFullInterviewRecording = useCallback((stream: MediaStream, id: string) => {
     if (fullInterviewRecorderRef.current?.state === "recording") return;
@@ -256,6 +260,7 @@ export function InterviewView() {
         const chunkIndex = fullRecordingChunkIndexRef.current;
         const formData = new FormData();
         formData.append("interviewId", id);
+        if (candidateIdRef.current) formData.append("candidateId", candidateIdRef.current);
         formData.append("chunkIndex", String(chunkIndex));
         formData.append("chunk", new File([event.data], `interview_${id}_${chunkIndex}.webm`, {
           type: event.data.type || "video/webm",
@@ -314,8 +319,33 @@ export function InterviewView() {
 
   const handleInterviewCompletion = async (msgs: Message[] = messages) => {
     if (!interviewId) return;
+    if (completionStartedRef.current) return;
+    completionStartedRef.current = true;
+    setIsCompletingInterview(true);
     let recordingWarning: string | null = null;
     try {
+      let finalMessages = msgs;
+      if (isRecordingControlled) {
+        const finalTranscript = await stopControlledRecording();
+        const responseText = (finalTranscript || draftResponse || currentTranscript).trim();
+        if (responseText) {
+          finalMessages = [
+            ...msgs,
+            { id: `${Date.now()}_user`, role: "user" as const, content: responseText },
+          ];
+          setMessages(finalMessages);
+        }
+      } else {
+        const responseText = (draftResponse || currentTranscript).trim();
+        const lastMessage = msgs[msgs.length - 1];
+        if (responseText && lastMessage?.role === "ai") {
+          finalMessages = [
+            ...msgs,
+            { id: `${Date.now()}_user`, role: "user" as const, content: responseText },
+          ];
+          setMessages(finalMessages);
+        }
+      }
       try {
         await stopFullInterviewRecording();
       } catch (recordingError) {
@@ -327,7 +357,7 @@ export function InterviewView() {
         score: 0,
         duration: String(durationSeconds),
         feedback: [],
-        transcript: msgs,
+        transcript: finalMessages,
         violations: violationsRef.current,
         securityEvents: securityEventsRef.current,
         suspicionScore: suspicionScoreRef.current || 0,
@@ -344,6 +374,8 @@ export function InterviewView() {
         description: storageWarning ? 'Session saved. Azure Storage needs attention.' : 'Session data and report saved.',
       });
     } catch (err) {
+      completionStartedRef.current = false;
+      setIsCompletingInterview(false);
       console.error('Error completing interview', err);
       toast({ title: 'Save failed', description: 'Could not save interview session', variant: 'destructive' });
     }
@@ -353,6 +385,7 @@ export function InterviewView() {
   useEffect(() => {
     isMountedRef.current = true;
     const id = searchParams.get("interviewId");
+    candidateIdRef.current = searchParams.get("candidateId")?.trim().toUpperCase() || null;
 
     const getCameraPermission = async () => {
       try {
@@ -448,6 +481,10 @@ export function InterviewView() {
     if (!hasAcceptedConsent || !cameraStream) return;
     attachCameraStream(cameraStream);
   }, [attachCameraStream, cameraStream, hasAcceptedConsent]);
+
+  useEffect(() => {
+    candidateIdRef.current = candidateId;
+  }, [candidateId]);
 
   useEffect(() => {
     if (!candidateId) {
@@ -572,8 +609,10 @@ export function InterviewView() {
     if (controlledRecorderRef.current && controlledRecorderRef.current.state !== 'inactive') {
       controlledRecorderRef.current.stop();
     }
-    stopContinuous();
+    const finalTranscript = await stopContinuous();
     setIsRecordingControlled(false);
+    if (finalTranscript) setDraftResponse(finalTranscript);
+    return finalTranscript;
   };
 
   const handleRecordToggle = () => {
@@ -584,17 +623,39 @@ export function InterviewView() {
   };
 
   const handleSubmitAnswer = async () => {
+    const isLastQuestion = currentQuestionIndex + 1 >= totalQuestionCount;
+
     if (isRecordingControlled) {
-      await stopControlledRecording();
-      toast({
-        title: "Recording stopped",
-        description: "Review or edit your response, then click Submit Answer.",
-      });
+      const finalTranscript = await stopControlledRecording();
+      const responseText = (finalTranscript || draftResponse || currentTranscript).trim();
+      if (!isLastQuestion) {
+        toast({
+          title: "Recording stopped",
+          description: "Review the transcript, then click Submit Answer.",
+        });
+        return;
+      }
+
+      const completedMessages = responseText
+        ? [
+            ...messages,
+            { id: `${Date.now()}_user`, role: "user" as const, content: responseText },
+          ]
+        : messages;
+      setMessages(completedMessages);
+      setDraftResponse("");
+      resetTranscript();
+      await handleInterviewCompletion(completedMessages);
       return;
     }
 
-    const trimmedResponse = draftResponse.trim();
+    const trimmedResponse = (draftResponse || currentTranscript).trim();
     if (!trimmedResponse) {
+      if (isLastQuestion) {
+        await handleInterviewCompletion(messages);
+        return;
+      }
+
       toast({
         title: "No response entered",
         description: "Record or type a response before submitting, or use Skip Question.",
@@ -894,8 +955,8 @@ export function InterviewView() {
               <p className={`text-[9px] font-bold uppercase tracking-[0.18em] ${timerTone.label}`}>Timer</p>
               <p className={`font-mono text-xs font-semibold ${timerTone.value}`}>{formattedRemainingTime}</p>
             </div>
-            <Button variant="destructive" className="h-8 rounded-lg px-3 text-xs" onClick={() => handleInterviewCompletion(messages)}>
-              End Interview
+            <Button variant="destructive" className="h-8 rounded-lg px-3 text-xs" disabled={isCompletingInterview} onClick={() => handleInterviewCompletion(messages)}>
+              {isCompletingInterview ? "Saving..." : "End Interview"}
             </Button>
           </div>
         </div>
@@ -1006,17 +1067,19 @@ export function InterviewView() {
                 <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Response Controls</p>
                   <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
-                    <Button onClick={handleSubmitAnswer} className="h-9 rounded-lg bg-[#056BFC] px-3 text-xs font-bold hover:bg-[#024099]">
-                      {isRecordingControlled
+                    <Button onClick={handleSubmitAnswer} disabled={isCompletingInterview} className="h-9 rounded-lg bg-[#056BFC] px-3 text-xs font-bold hover:bg-[#024099]">
+                      {isCompletingInterview
+                        ? "Saving..."
+                        : isRecordingControlled
                         ? "Stop Recording"
                         : currentQuestionIndex + 1 >= totalQuestionCount
                           ? "Finish Interview"
                           : "Submit Answer"}
                     </Button>
-                    <Button onClick={handleRecordToggle} disabled={!audioStream} variant="outline" className="h-9 rounded-lg border-slate-300 px-3 text-xs font-bold">
+                    <Button onClick={handleRecordToggle} disabled={!audioStream || isCompletingInterview} variant="outline" className="h-9 rounded-lg border-slate-300 px-3 text-xs font-bold">
                       {isRecordingControlled ? "Stop" : "Record"}
                     </Button>
-                    <Button onClick={handleSkipQuestion} variant="ghost" className="h-9 rounded-lg px-3 text-xs font-bold text-slate-600">
+                    <Button onClick={handleSkipQuestion} disabled={isCompletingInterview} variant="ghost" className="h-9 rounded-lg px-3 text-xs font-bold text-slate-600">
                       Skip
                     </Button>
                   </div>

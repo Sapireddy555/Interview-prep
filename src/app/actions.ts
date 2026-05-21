@@ -474,10 +474,19 @@ function compactDocumentText(text: string, maxLength = 3500) {
     return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
 }
 
-function buildJobDescriptionQuestionBank(role: string, _jobDescriptionText: string) {
-    const technicalQuestions = getTechnicalQuestionPool(role)
-        .slice(0, 5)
-        .map((question) => `[technical] ${question}`);
+function buildJobDescriptionQuestionBank(role: string, jobDescriptionText: string) {
+    const jd = compactDocumentText(jobDescriptionText);
+    const technicalQuestions = jd
+        ? [
+            `[technical] This test is for ${role}. Based on the uploaded job description, summarize the responsibilities you consider most important and explain your relevant experience.`,
+            `[technical] The job description includes this context: ${jd}. Pick one required skill or responsibility and walk through how you would apply it in a real project.`,
+            `[technical] Based on the job description, describe the architecture, tools, or process you would use to deliver the core work successfully.`,
+            `[technical] What risks, trade-offs, or quality concerns would you watch for while performing the responsibilities described in this job description?`,
+            `[technical] How would you measure success for this ${role} test based on the expectations in the job description?`,
+        ]
+        : getTechnicalQuestionPool(role)
+            .slice(0, 5)
+            .map((question) => `[technical] ${question}`);
 
     return ["[no_resume_projects]", ...technicalQuestions].join("\n");
 }
@@ -622,12 +631,13 @@ async function uploadReportToAzure(interviewId: string, report: any, session: an
             containerClient = new ContainerClient(sasUrl);
         } else {
             const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString!);
-            containerClient = blobServiceClient.getContainerClient("interview-reports");
+            containerClient = blobServiceClient.getContainerClient("interview-artifacts");
             await containerClient.createIfNotExists();
         }
 
+        const ownerFolder = getArtifactOwnerFolder(session.candidate_id || interviewId);
         const reportContent = Buffer.from(report.htmlReport || formatReportToHtml(interviewId, report, session), "utf8");
-        const blockBlobClient = containerClient.getBlockBlobClient(`report_${interviewId}.html`);
+        const blockBlobClient = containerClient.getBlockBlobClient(`${ownerFolder}/${interviewId}/feedback.html`);
         
         await blockBlobClient.uploadData(reportContent, {
             blobHTTPHeaders: { blobContentType: "text/html; charset=utf-8" }
@@ -692,6 +702,20 @@ function parseDataUri(dataUri: string) {
         contentType: match[1],
         buffer: Buffer.from(match[2], "base64"),
     };
+}
+
+function getArtifactOwnerFolder(value: string) {
+    return (value || "unassigned").replace(/[^a-zA-Z0-9._-]/g, "_");
+}
+
+async function getCandidateIdForInterview(interviewId: string) {
+    try {
+        const res = await db.query("SELECT candidate_id FROM sessions WHERE id = $1", [interviewId]);
+        return res.rows[0]?.candidate_id || "";
+    } catch (error) {
+        console.error("Failed to resolve candidate ID for interview artifact:", error);
+        return "";
+    }
 }
 
 async function getCandidateSelfieContainer() {
@@ -1209,6 +1233,7 @@ function formatReportToHtml(id: string, report: any, session: any): string {
 
 export async function uploadRecordingChunk(formData: FormData) {
   const interviewId = formData.get("interviewId") as string;
+  const candidateIdFromForm = String(formData.get("candidateId") || "").trim();
   const chunkIndex = parseInt(formData.get("chunkIndex") as string, 10);
   const chunkFile = formData.get("chunk") as File | null;
   
@@ -1233,11 +1258,12 @@ export async function uploadRecordingChunk(formData: FormData) {
         containerClient = new ContainerClient(sasUrl);
       } else {
         const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString!);
-        containerClient = blobServiceClient.getContainerClient("interview-recordings");
+        containerClient = blobServiceClient.getContainerClient("interview-artifacts");
         await containerClient.createIfNotExists();
       }
 
-      const blobName = `${interviewId}.webm`;
+      const ownerFolder = getArtifactOwnerFolder(candidateIdFromForm || await getCandidateIdForInterview(interviewId) || interviewId);
+      const blobName = `${ownerFolder}/${interviewId}/recording.webm`;
       const appendBlobClient = containerClient.getAppendBlobClient(blobName);
       
       try {
@@ -1258,6 +1284,7 @@ export async function uploadRecordingChunk(formData: FormData) {
 
 export async function uploadViolationScreenshot(formData: FormData) {
   const interviewId = formData.get("interviewId") as string;
+  const candidateIdFromForm = String(formData.get("candidateId") || "").trim();
   const timestamp = (formData.get("timestamp") as string) || String(Date.now());
   const imageFile = formData.get("image") as File | null;
 
@@ -1265,7 +1292,8 @@ export async function uploadViolationScreenshot(formData: FormData) {
 
   const sasUrl = process.env.AZURE_STORAGE_SAS_URL;
   const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
-  const blobName = `violation_${interviewId}_${timestamp}.png`;
+  const ownerFolder = getArtifactOwnerFolder(candidateIdFromForm || await getCandidateIdForInterview(interviewId) || interviewId);
+  const blobName = `${ownerFolder}/${interviewId}/violations/violation_${timestamp}.png`;
 
   if (!sasUrl && !connectionString) {
     console.log(`[Mock Azure Violation Upload] Received violation for ${interviewId} at ${timestamp}, size: ${imageFile.size}`);
@@ -1287,7 +1315,7 @@ export async function uploadViolationScreenshot(formData: FormData) {
       containerClient = new ContainerClient(sasUrl);
     } else {
       const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString!);
-      containerClient = blobServiceClient.getContainerClient("interview-violations");
+      containerClient = blobServiceClient.getContainerClient("interview-artifacts");
       await containerClient.createIfNotExists();
     }
 
