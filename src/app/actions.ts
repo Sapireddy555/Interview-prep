@@ -57,6 +57,8 @@ import type { InterviewSession } from "@/lib/types";
 
 // Deprecated actions removed
 
+const MAX_INTERVIEW_ATTEMPTS_PER_CANDIDATE = 2;
+
 export async function createInterviewSession(
   session: Omit<InterviewSession, 'id' | 'date' | 'feedback' | 'transcript' | 'summaryReport' | 'violations'> & { id?: string }
 ) {
@@ -64,10 +66,21 @@ export async function createInterviewSession(
     console.log('Creating interview session with ID:', localId);
     
     try {
+        const candidateId = session.id?.trim().toUpperCase() || null;
+        if (candidateId) {
+            const attempts = await getCandidateInterviewAttemptCount(candidateId);
+            if (attempts >= MAX_INTERVIEW_ATTEMPTS_PER_CANDIDATE) {
+                return {
+                    success: false,
+                    error: `This unique ID has already been used for ${MAX_INTERVIEW_ATTEMPTS_PER_CANDIDATE} attempts. Please contact the recruiter for a new test link.`,
+                };
+            }
+        }
+
         await db.query(
             `INSERT INTO sessions (id, candidate_id, role, duration) 
              VALUES ($1, $2, $3, $4)`,
-            [localId, session.id || null, session.role, session.duration || '0']
+            [localId, candidateId, session.role, session.duration || '0']
         );
         return { success: true, id: localId };
     } catch (error) {
@@ -123,6 +136,11 @@ export async function getCandidate(id: string) {
     return res.rows[0] || null;
 }
 
+async function getCandidateInterviewAttemptCount(candidateId: string) {
+    const res = await db.query("SELECT COUNT(*)::int AS count FROM sessions WHERE candidate_id = $1", [candidateId]);
+    return Number(res.rows[0]?.count || 0);
+}
+
 export async function fetchInterviewQuestionBank(interviewId: string) {
     try {
         const res = await db.query(
@@ -165,8 +183,18 @@ export async function validateCandidateUniqueId(id: string) {
             return { success: false, error: "Invalid Unique ID." };
         }
 
+        const attempts = await getCandidateInterviewAttemptCount(normalizedId);
+        if (attempts >= MAX_INTERVIEW_ATTEMPTS_PER_CANDIDATE) {
+            return {
+                success: false,
+                error: `This unique ID has reached the maximum of ${MAX_INTERVIEW_ATTEMPTS_PER_CANDIDATE} interview attempts. Please contact the recruiter for a new test link.`,
+            };
+        }
+
         return {
             success: true,
+            attemptsUsed: attempts,
+            attemptsRemaining: MAX_INTERVIEW_ATTEMPTS_PER_CANDIDATE - attempts,
             candidate: {
                 id: candidate.id,
                 name: candidate.name,
