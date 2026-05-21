@@ -87,8 +87,8 @@ function toMarkdown(session: any): string {
   return lines.join("\n");
 }
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
-  const { id } = params;
+export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const format = new URL(request.url).searchParams.get("format") || "json";
 
   const res = await db.query("SELECT * FROM sessions WHERE id = $1", [id]);

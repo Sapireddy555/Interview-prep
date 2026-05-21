@@ -8,7 +8,6 @@ if (!connectionString) {
 
 const pool = new Pool({
   connectionString,
-  ssl: { rejectUnauthorized: false },
   max: 20,
   idleTimeoutMillis: 30000,
   // increase connection timeout to allow slower network handshakes
@@ -26,7 +25,7 @@ export async function ensureConnected(retries = 3, delayMs = 2000): Promise<void
       console.log('DB connection ok');
       return;
     } catch (err) {
-      console.error(`DB connection attempt ${attempt} failed:`, err);
+      console.error("DB connection attempt %d failed:", attempt, err);
       if (attempt < retries) {
         await new Promise(r => setTimeout(r, delayMs));
       } else {
