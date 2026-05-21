@@ -3,14 +3,14 @@
 
 import { useSearchParams } from "next/navigation";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot, fetchInterviewQuestionBank } from "@/app/actions";
+import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot, fetchInterviewQuestionBank, verifyCandidateSelfieAction } from "@/app/actions";
 import { getInterviewQuestionSetForRole, INTERVIEW_SECTION_TITLES } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
-import { MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
+import { CheckCircle, MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
 import type { InterviewSettings, Message, SecurityEvent } from "@/lib/types";
 import { useAzureSpeech } from "@/hooks/use-azure-speech";
 import { useToast } from "@/hooks/use-toast";
@@ -32,9 +32,13 @@ export function InterviewView() {
   const [violations, setViolations] = useState<{ timestamp: string; message: string }[]>([]);
   const [showViolationsPanel, setShowViolationsPanel] = useState(false);
   const [interviewId, setInterviewId] = useState<string | null>(null);
+  const [candidateId, setCandidateId] = useState<string | null>(null);
   const [isCompleted, setIsCompleted] = useState(false);
   const [hasAcceptedConsent, setHasAcceptedConsent] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [identityStatus, setIdentityStatus] = useState<"not_required" | "pending" | "verifying" | "matched" | "failed">("pending");
+  const [identityMessage, setIdentityMessage] = useState("");
+  const [showIdentityMatchedPopup, setShowIdentityMatchedPopup] = useState(false);
   const [consents, setConsents] = useState({
     integrity: false,
     devices: false,
@@ -90,6 +94,39 @@ export function InterviewView() {
         console.warn("Unable to autoplay candidate camera preview:", error);
       });
     }
+  }, []);
+
+  const captureFrameFromStream = useCallback(async (stream: MediaStream) => {
+    const video = document.createElement("video");
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+
+    await new Promise<void>((resolve, reject) => {
+      const timeout = window.setTimeout(() => reject(new Error("Camera frame capture timed out.")), 5000);
+      video.onloadedmetadata = () => {
+        video.play()
+          .then(() => {
+            window.setTimeout(() => {
+              window.clearTimeout(timeout);
+              resolve();
+            }, 300);
+          })
+          .catch((error) => {
+            window.clearTimeout(timeout);
+            reject(error);
+          });
+      };
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 960;
+    canvas.height = video.videoHeight || 540;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not capture camera frame.");
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    video.srcObject = null;
+    return canvas.toDataURL("image/jpeg", 0.92);
   }, []);
 
   const totalQuestionCount =
@@ -414,6 +451,59 @@ export function InterviewView() {
   }, [attachCameraStream, cameraStream, hasAcceptedConsent]);
 
   useEffect(() => {
+    if (!candidateId) {
+      setIdentityStatus("not_required");
+      return;
+    }
+
+    if (!hasAcceptedConsent || !cameraStream || !interviewId || identityStatus !== "pending") return;
+
+    let cancelled = false;
+    const streamForVerification = cameraStream;
+    const candidateIdForVerification = candidateId;
+    const interviewIdForVerification = interviewId;
+
+    async function verifyIdentity() {
+      try {
+        setIdentityStatus("verifying");
+        setIdentityMessage("Matching your live camera image with your reference selfie...");
+        const liveFrame = await captureFrameFromStream(streamForVerification);
+        if (cancelled) return;
+
+        const result = await verifyCandidateSelfieAction({
+          candidateId: candidateIdForVerification,
+          interviewId: interviewIdForVerification,
+          imageUri: liveFrame,
+        });
+        if (cancelled) return;
+
+        if (result.success && result.matched) {
+          setIdentityStatus("matched");
+          setIdentityMessage(`Identity matched${typeof result.confidence === "number" ? ` (${Math.round(result.confidence * 100)}%)` : ""}.`);
+          setShowIdentityMatchedPopup(true);
+          window.setTimeout(() => setShowIdentityMatchedPopup(false), 2200);
+          return;
+        }
+
+        setIdentityStatus("failed");
+        setIdentityMessage(result.error || result.message || "Identity verification failed.");
+        streamForVerification.getTracks().forEach((track) => track.stop());
+      } catch (error) {
+        if (cancelled) return;
+        setIdentityStatus("failed");
+        setIdentityMessage(error instanceof Error ? error.message : "Identity verification failed.");
+        streamForVerification.getTracks().forEach((track) => track.stop());
+      }
+    }
+
+    void verifyIdentity();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cameraStream, candidateId, captureFrameFromStream, hasAcceptedConsent, identityStatus, interviewId]);
+
+  useEffect(() => {
     if (!interviewId || isCompleted) return;
 
     if (timerRef.current) {
@@ -553,9 +643,12 @@ export function InterviewView() {
       const role = searchParams.get("role");
       const difficulty = searchParams.get("difficulty") as InterviewSettings['difficulty'] | null;
       const id = searchParams.get("interviewId");
+      const candidateIdParam = searchParams.get("candidateId")?.trim().toUpperCase() || "";
 
       if (role && difficulty && id) {
         setInterviewId(id);
+        setCandidateId(candidateIdParam || null);
+        setIdentityStatus(candidateIdParam ? "pending" : "not_required");
         const fallbackQuestionBank = searchParams.get("questionBank") || "";
         const questionBankResult = await fetchInterviewQuestionBank(id);
         if (cancelled) return;
@@ -740,8 +833,52 @@ export function InterviewView() {
     );
   }
 
+  if (candidateId && (identityStatus === "pending" || identityStatus === "verifying")) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-lg">
+          <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#056BFC]" />
+          <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-[#056BFC]">Identity Verification</p>
+          <h1 className="mt-3 text-2xl font-black text-slate-900">Matching live camera</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            {identityMessage || "Please stay centered while Aura verifies your face against the reference selfie."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (candidateId && identityStatus === "failed") {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-lg rounded-xl border border-red-200 bg-white p-8 text-center shadow-lg">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
+            <VolumeX className="h-6 w-6" />
+          </div>
+          <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-red-600">Interview Stopped</p>
+          <h1 className="mt-3 text-2xl font-black text-slate-900">Identity verification failed</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            {identityMessage || "Your live camera image did not match the stored reference selfie."}
+          </p>
+          <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-500">
+            Please contact the TAG team or recruiter for assistance. The interview cannot continue until identity is verified.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-full w-full flex-col">
+      {showIdentityMatchedPopup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 px-4">
+          <div className="w-full max-w-sm rounded-xl bg-white px-8 py-7 text-center shadow-2xl">
+            <CheckCircle className="mx-auto h-12 w-12 text-emerald-600" />
+            <p className="mt-4 text-xs font-black uppercase tracking-[0.22em] text-emerald-700">Identity Matched</p>
+            <p className="mt-2 text-sm leading-6 text-slate-500">{identityMessage || "You may continue the interview."}</p>
+          </div>
+        </div>
+      )}
       {/* hidden proctoring video to keep camera frames even during screen-share */}
       <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
       <div className="flex h-full min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-50 p-3">

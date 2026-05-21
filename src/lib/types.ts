@@ -100,4 +100,8 @@ export type InterviewSession = {
   securityEvents?: SecurityEvent[];
   suspicionScore?: number;
   reviewerScorecard?: ReviewerScorecard | null;
+  identityStatus?: string | null;
+  identityScore?: number | null;
+  identityVerifiedAt?: string | null;
+  identityError?: string | null;
 };

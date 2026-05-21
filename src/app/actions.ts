@@ -1,6 +1,5 @@
 "use server";
 
-import { verifyAadharWithADI } from "@/lib/azure-id-verify";
 import { extractTextWithADI } from "@/lib/azure-id-verify";
 import { analyzeFrameWithAzure } from "@/lib/azure-vision-proctor";
 import { z } from "zod";
@@ -179,6 +178,80 @@ export async function validateCandidateUniqueId(id: string) {
     } catch (error) {
         console.error("Error validating candidate ID:", error);
         return { success: false, error: String(error) };
+    }
+}
+
+export async function storeCandidateSelfieAction(input: { candidateId: string; imageUri: string }) {
+    const candidateId = input.candidateId.trim().toUpperCase();
+    if (!candidateId || !input.imageUri) {
+        return { success: false, error: "Candidate ID and selfie image are required." };
+    }
+
+    try {
+        const candidate = await getCandidate(candidateId);
+        if (!candidate) {
+            return { success: false, error: "Candidate not found." };
+        }
+
+        const image = parseDataUri(input.imageUri);
+        if (!image.contentType.startsWith("image/")) {
+            return { success: false, error: "Selfie must be an image." };
+        }
+
+        const upload = await uploadCandidateSelfieToAzure(candidateId, image.buffer, image.contentType);
+        await db.query(
+            `UPDATE candidates
+             SET selfie_url = $1, selfie_blob_name = $2, selfie_captured_at = CURRENT_TIMESTAMP
+             WHERE id = $3`,
+            [upload.url, upload.blobName, candidateId]
+        );
+
+        return { success: true, selfieUrl: upload.url };
+    } catch (error) {
+        console.error("Error storing candidate selfie:", error);
+        return { success: false, error: String(error) };
+    }
+}
+
+export async function verifyCandidateSelfieAction(input: { candidateId: string; interviewId: string; imageUri: string }) {
+    const candidateId = input.candidateId.trim().toUpperCase();
+    const interviewId = input.interviewId.trim();
+    if (!candidateId || !interviewId || !input.imageUri) {
+        return { success: false, matched: false, error: "Candidate ID, interview ID, and live image are required." };
+    }
+
+    try {
+        const candidate = await getCandidate(candidateId);
+        if (!candidate?.selfie_blob_name) {
+            const error = "Reference selfie is not available for this candidate.";
+            await saveIdentityVerificationResult(interviewId, "failed", null, error);
+            return { success: false, matched: false, error };
+        }
+
+        const referenceImage = await downloadCandidateSelfieFromAzure(candidate.selfie_blob_name);
+        const liveImage = parseDataUri(input.imageUri);
+        const result = await verifyFacesWithAzureFace(referenceImage, liveImage.buffer);
+        const threshold = Number(process.env.AZURE_FACE_MATCH_THRESHOLD || "0.65");
+        const matched = Boolean(result.isIdentical && result.confidence >= threshold);
+
+        await saveIdentityVerificationResult(
+            interviewId,
+            matched ? "matched" : "failed",
+            result.confidence,
+            matched ? null : "Live selfie did not match the stored reference selfie."
+        );
+
+        return {
+            success: true,
+            matched,
+            confidence: result.confidence,
+            threshold,
+            message: matched ? "Identity matched." : "Identity verification failed.",
+        };
+    } catch (error) {
+        console.error("Error verifying candidate selfie:", error);
+        await saveIdentityVerificationResult(interviewId, "failed", null, String(error));
+        return { success: false, matched: false, error: String(error) };
     }
 }
 
@@ -515,6 +588,15 @@ function normalizeSessionRow(row: any): InterviewSession {
     securityEvents: row.security_events ?? [],
     suspicionScore: row.suspicion_score ?? 0,
     reviewerScorecard: row.reviewer_scorecard ?? null,
+    identityStatus: row.identity_status ?? null,
+    identityScore: row.identity_score !== undefined && row.identity_score !== null ? Number(row.identity_score) : null,
+    identityVerifiedAt:
+      typeof row.identity_verified_at === "string"
+        ? row.identity_verified_at
+        : row.identity_verified_at?.toISOString?.()
+          ? row.identity_verified_at.toISOString()
+          : null,
+    identityError: row.identity_error ?? null,
   };
 }
 
@@ -598,6 +680,147 @@ async function uploadCandidateDocumentToAzure(candidateId: string, file: File, d
     }
 }
 
+function parseDataUri(dataUri: string) {
+    const match = dataUri.match(/^data:([^;]+);base64,(.+)$/);
+    if (!match) {
+        throw new Error("Invalid image data.");
+    }
+
+    return {
+        contentType: match[1],
+        buffer: Buffer.from(match[2], "base64"),
+    };
+}
+
+async function getCandidateSelfieContainer() {
+    const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
+    const sasUrl = process.env.AZURE_STORAGE_SAS_URL;
+
+    if (!connectionString && !sasUrl) {
+        throw new Error("Azure Storage is not configured for candidate selfie storage.");
+    }
+
+    const { BlobServiceClient, ContainerClient } = await import("@azure/storage-blob");
+
+    if (sasUrl) {
+        return new ContainerClient(sasUrl);
+    }
+
+    const blobServiceClient = BlobServiceClient.fromConnectionString(connectionString!);
+    const containerClient = blobServiceClient.getContainerClient("candidate-selfies");
+    await containerClient.createIfNotExists();
+    return containerClient;
+}
+
+async function uploadCandidateSelfieToAzure(candidateId: string, buffer: Buffer, contentType: string) {
+    const containerClient = await getCandidateSelfieContainer();
+    const extension = contentType.includes("png") ? "png" : "jpg";
+    const blobName = `${candidateId}/reference_selfie_${Date.now()}.${extension}`;
+    const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+
+    await blockBlobClient.uploadData(buffer, {
+        blobHTTPHeaders: { blobContentType: contentType },
+        metadata: {
+            candidateId,
+            documentType: "reference-selfie",
+        },
+    });
+
+    return { url: blockBlobClient.url, blobName };
+}
+
+async function downloadCandidateSelfieFromAzure(blobName: string) {
+    const containerClient = await getCandidateSelfieContainer();
+    const blockBlobClient = containerClient.getBlockBlobClient(blobName);
+    return Buffer.from(await blockBlobClient.downloadToBuffer());
+}
+
+async function detectFaceIdWithAzureFace(image: Buffer) {
+    const endpoint = (process.env.AZURE_FACE_ENDPOINT || "").replace(/\/$/, "");
+    const key = process.env.AZURE_FACE_KEY || process.env.AZURE_FACE_API_KEY || "";
+
+    if (!endpoint || !key) {
+        throw new Error("Azure Face API is not configured.");
+    }
+
+    const url = new URL(`${endpoint}/face/v1.0/detect`);
+    url.searchParams.set("returnFaceId", "true");
+    url.searchParams.set("recognitionModel", "recognition_04");
+    url.searchParams.set("detectionModel", "detection_03");
+    url.searchParams.set("faceIdTimeToLive", "120");
+
+    const response = await fetch(url, {
+        method: "POST",
+        headers: {
+            "Ocp-Apim-Subscription-Key": key,
+            "Content-Type": "application/octet-stream",
+        },
+        body: image,
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Azure Face detect failed (${response.status}): ${errorText}`);
+    }
+
+    const faces = await response.json();
+    if (!Array.isArray(faces) || faces.length !== 1 || !faces[0]?.faceId) {
+        throw new Error(faces?.length > 1 ? "Multiple faces detected. Please ensure only the candidate is visible." : "No face detected.");
+    }
+
+    return faces[0].faceId as string;
+}
+
+async function verifyFacesWithAzureFace(referenceImage: Buffer, liveImage: Buffer) {
+    const endpoint = (process.env.AZURE_FACE_ENDPOINT || "").replace(/\/$/, "");
+    const key = process.env.AZURE_FACE_KEY || process.env.AZURE_FACE_API_KEY || "";
+
+    if (!endpoint || !key) {
+        throw new Error("Azure Face API is not configured.");
+    }
+
+    const [referenceFaceId, liveFaceId] = await Promise.all([
+        detectFaceIdWithAzureFace(referenceImage),
+        detectFaceIdWithAzureFace(liveImage),
+    ]);
+
+    const response = await fetch(`${endpoint}/face/v1.0/verify`, {
+        method: "POST",
+        headers: {
+            "Ocp-Apim-Subscription-Key": key,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ faceId1: referenceFaceId, faceId2: liveFaceId }),
+    });
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Azure Face verify failed (${response.status}): ${errorText}`);
+    }
+
+    const result = await response.json();
+    return {
+        isIdentical: Boolean(result.isIdentical),
+        confidence: Number(result.confidence || 0),
+    };
+}
+
+async function saveIdentityVerificationResult(interviewId: string, status: "matched" | "failed", score: number | null, error: string | null) {
+    try {
+        await db.query(
+            `UPDATE sessions
+             SET identity_status = $1,
+                 identity_score = $2,
+                 identity_verified_at = CURRENT_TIMESTAMP,
+                 identity_error = $3
+             WHERE id = $4`,
+            [status, score, error, interviewId]
+        );
+    } catch (dbError) {
+        console.error("Failed to save identity verification result:", dbError);
+    }
+}
+
 function parseAcsConnectionString(connectionString: string) {
     const parts = Object.fromEntries(
         connectionString
@@ -672,7 +895,7 @@ async function sendCandidateInvitationEmail(input: {
                 "Instructions:",
                 "1. Open the interview link in a quiet room with a stable internet connection.",
                 "2. Enter your unique ID exactly as shown above.",
-                "3. Keep your Aadhar ID ready for verification.",
+                "3. Keep your camera ready for selfie verification.",
                 "4. Allow camera and microphone access when prompted.",
                 "5. Do not use additional devices, screens, notes, or external assistance.",
                 "6. The interview will be recorded and reviewed by the ValueMomentum hiring team.",
@@ -696,7 +919,7 @@ async function sendCandidateInvitationEmail(input: {
                     <ol>
                         <li>Open the interview link in a quiet room with a stable internet connection.</li>
                         <li>Enter your unique ID exactly as shown above.</li>
-                        <li>Keep your Aadhar ID ready for verification.</li>
+                        <li>Keep your camera ready for selfie verification.</li>
                         <li>Allow camera and microphone access when prompted.</li>
                         <li>Do not use additional devices, screens, notes, or external assistance.</li>
                         <li>The interview will be recorded and reviewed by the ValueMomentum hiring team.</li>
@@ -934,16 +1157,6 @@ function formatReportToHtml(id: string, report: any, session: any): string {
       </div>
     </div>
   `;
-}
-
-export async function validateAadharAction(input: { imageUri: string }) {
-  try {
-    const result = await verifyAadharWithADI(input.imageUri);
-    return { success: true, data: result };
-  } catch (error) {
-    console.error("Error validating aadhar:", error);
-    return { success: false, error: String(error) };
-  }
 }
 
 export async function uploadRecordingChunk(formData: FormData) {

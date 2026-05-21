@@ -15,6 +15,9 @@ const schema = `
     resume_text TEXT,
     job_description_text TEXT,
     question_bank TEXT,
+    selfie_url TEXT,
+    selfie_blob_name TEXT,
+    selfie_captured_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -31,7 +34,11 @@ const schema = `
     violations JSONB DEFAULT '[]',
     security_events JSONB DEFAULT '[]',
     suspicion_score INT DEFAULT 0,
-    reviewer_scorecard JSONB
+    reviewer_scorecard JSONB,
+    identity_status TEXT,
+    identity_score NUMERIC,
+    identity_verified_at TIMESTAMPTZ,
+    identity_error TEXT
   );
 
   -- New table to store violation events/screenshots separately for auditing and retention
@@ -47,6 +54,10 @@ const schema = `
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS security_events JSONB DEFAULT '[]';
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS suspicion_score INT DEFAULT 0;
   ALTER TABLE sessions ADD COLUMN IF NOT EXISTS reviewer_scorecard JSONB;
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS identity_status TEXT;
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS identity_score NUMERIC;
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS identity_verified_at TIMESTAMPTZ;
+  ALTER TABLE sessions ADD COLUMN IF NOT EXISTS identity_error TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS name TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS email TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_url TEXT;
@@ -56,6 +67,9 @@ const schema = `
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS resume_text TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS job_description_text TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS question_bank TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS selfie_url TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS selfie_blob_name TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS selfie_captured_at TIMESTAMPTZ;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
 `;
 

@@ -34,7 +34,7 @@ export default function LoginPage() {
       if (result.success) {
         toast({
           title: "Credential Accepted",
-          description: "Proceeding to Aadhar verification...",
+          description: "Proceeding to selfie verification...",
         });
         router.push(`/verify-aadhar?id=${uniqueId.trim().toUpperCase()}`);
       } else {
@@ -80,7 +80,7 @@ export default function LoginPage() {
           <li className="flex items-start gap-3">
             <CheckCircle className="mt-1 h-5 w-5 shrink-0 text-primary" />
             <span>
-              Ensure you have your Aadhar card ready for mandatory OCR verification on the next step.
+              Keep your camera ready for a required selfie verification on the next step.
             </span>
           </li>
           <li className="flex items-start gap-3">

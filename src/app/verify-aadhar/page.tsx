@@ -1,74 +1,69 @@
 "use client";
 
-import React, { useRef, useState, useEffect, Suspense } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Camera } from "lucide-react";
-import { validateAadharAction, createInterviewSession, getCandidate } from "@/app/actions";
+import { Camera, CheckCircle, Info, Loader2, ShieldCheck, UserCheck, VolumeX } from "lucide-react";
+import { createInterviewSession, getCandidate, storeCandidateSelfieAction } from "@/app/actions";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { getMockCandidate } from "@/lib/mock-db";
 
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
-import { Smartphone, Upload, Scan, Info } from "lucide-react";
-
-function VerifyAadharContent() {
+function SelfieVerificationContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
-  
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  
-  const [hasCameraPermission, setHasCameraPermission] = useState(true);
-  const [isCapturing, setIsCapturing] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanAttempts, setScanAttempts] = useState(0);
-  const [uniqueId, setUniqueId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState("live-scan");
-  const [candidateName, setCandidateName] = useState("Candidate");
-  const [showBestWishPopup, setShowBestWishPopup] = useState(false);
-  const [isRedirectingToInterview, setIsRedirectingToInterview] = useState(false);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  const MAX_SCAN_ATTEMPTS = 10;
+  const [hasCameraPermission, setHasCameraPermission] = useState(true);
+  const [uniqueId, setUniqueId] = useState<string | null>(null);
+  const [candidateName, setCandidateName] = useState("Candidate");
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [capturedSelfie, setCapturedSelfie] = useState<string | null>(null);
+  const [showReadyPopup, setShowReadyPopup] = useState(false);
 
   useEffect(() => {
-    const id = searchParams.get("id");
+    const id = searchParams.get("id")?.trim().toUpperCase();
     if (!id) {
       router.push("/login");
       return;
     }
     setUniqueId(id);
 
+    let cancelled = false;
+
     async function setupCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+
+        streamRef.current = stream;
         setHasCameraPermission(true);
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          await videoRef.current.play().catch(() => undefined);
         }
       } catch (error) {
         console.error("Camera access denied:", error);
         setHasCameraPermission(false);
       }
     }
-    
-    if (activeTab === "live-scan") {
-      setupCamera();
-    }
+
+    void setupCamera();
 
     return () => {
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach((track) => track.stop());
-      }
+      cancelled = true;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
     };
-  }, [router, searchParams, activeTab]);
+  }, [router, searchParams]);
 
   useEffect(() => {
     if (!uniqueId) return;
@@ -100,317 +95,202 @@ function VerifyAadharContent() {
     };
   }, [uniqueId]);
 
-  // Auto-Capture Loop
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    
-    if (isScanning && activeTab === "live-scan") {
-      interval = setInterval(() => {
-        if (scanAttempts < MAX_SCAN_ATTEMPTS) {
-          handleCaptureAndVerify(true);
-          setScanAttempts(prev => prev + 1);
-        } else {
-          setIsScanning(false);
-          toast({
-            title: "Scan Timeout",
-            description: "We couldn't verify your ID after several attempts. Please try manual upload or ensure better lighting.",
-            variant: "destructive"
-          });
-        }
-      }, 3000); // Try every 3 seconds
-    }
+  const captureSelfie = () => {
+    if (!videoRef.current || !canvasRef.current) return null;
 
-    return () => clearInterval(interval);
-  }, [isScanning, scanAttempts, activeTab]);
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const width = video.videoWidth || 960;
+    const height = video.videoHeight || 540;
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) return null;
 
-  const handleCaptureAndVerify = async (isAuto = false) => {
-    if (!videoRef.current || !canvasRef.current || !uniqueId) return;
-
-    if (!isAuto) setIsCapturing(true);
-
-    try {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("Could not get canvas context");
-      
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUri = canvas.toDataURL("image/jpeg", 0.9);
-
-      const ocrResult = await validateAadharAction({ imageUri: dataUri });
-      
-      if (ocrResult.success && ocrResult.data?.verified) {
-        setIsScanning(false);
-        toast({
-          title: "Verification Successful",
-          description: `Identity verified. Starting your session...`,
-        });
-        await proceedToInterview();
-      } else if (!isAuto) {
-        toast({
-          variant: "destructive",
-          title: "Verification Failed",
-          description: ocrResult.data?.message || "Could not find a valid Aadhar card. Please try again.",
-        });
-      }
-    } catch (error) {
-      if (!isAuto) {
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: "An unexpected error occurred during verification.",
-        });
-      }
-    } finally {
-      if (!isAuto) setIsCapturing(false);
-    }
+    context.drawImage(video, 0, 0, width, height);
+    return canvas.toDataURL("image/jpeg", 0.92);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !uniqueId) return;
+  const proceedToInterview = async (selfieDataUri: string) => {
+    if (!uniqueId) return;
 
     setIsCapturing(true);
-    const reader = new FileReader();
-    reader.onloadend = async () => {
-      const dataUri = reader.result as string;
-      try {
-        const ocrResult = await validateAadharAction({ imageUri: dataUri });
-        if (ocrResult.success && ocrResult.data?.verified) {
-          toast({ title: "Success", description: "Identity verified via uploaded document." });
-          await proceedToInterview();
-        } else {
-          toast({
-            variant: "destructive",
-            title: "Verification Failed",
-            description: ocrResult.data?.message || "Could not extract Aadhar details from the image.",
-          });
-        }
-      } catch (err) {
-        toast({ variant: "destructive", title: "Error", description: "Verification failed." });
-      } finally {
-        setIsCapturing(false);
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const proceedToInterview = async () => {
-    if (!uniqueId) return;
-    if (isRedirectingToInterview) return;
-
-    setIsRedirectingToInterview(true);
-
-    let candidate = null;
 
     try {
-      candidate = await getCandidate(uniqueId);
-    } catch (error) {
-      console.error("Failed to fetch candidate from DB:", error);
-    }
+      const selfieResult = await storeCandidateSelfieAction({
+        candidateId: uniqueId,
+        imageUri: selfieDataUri,
+      });
 
-    candidate = candidate || getMockCandidate(uniqueId);
-    if (!candidate) {
-      setIsRedirectingToInterview(false);
-      return;
-    }
+      if (!selfieResult.success) {
+        throw new Error(selfieResult.error || "Could not store reference selfie.");
+      }
 
-    const displayName = candidate.name || candidateName || "Candidate";
-    setCandidateName(displayName);
+      let candidate = null;
+      try {
+        candidate = await getCandidate(uniqueId);
+      } catch (error) {
+        console.error("Failed to fetch candidate from DB:", error);
+      }
 
-    const sessionResult = await createInterviewSession({
-      id: uniqueId,
-      role: candidate.role,
-      score: 0,
-      duration: "0",
-    });
+      candidate = candidate || getMockCandidate(uniqueId);
+      if (!candidate) {
+        throw new Error("Candidate details were not found.");
+      }
 
-    if (sessionResult.success && sessionResult.id) {
+      const displayName = candidate.name || candidateName || "Candidate";
+      setCandidateName(displayName);
+
+      const sessionResult = await createInterviewSession({
+        id: uniqueId,
+        role: candidate.role,
+        score: 0,
+        duration: "0",
+      });
+
+      if (!sessionResult.success || !sessionResult.id) {
+        throw new Error(sessionResult.error || "Could not create interview session.");
+      }
+
       const params = new URLSearchParams({
         role: candidate.role,
         difficulty: candidate.difficulty,
         interviewId: sessionResult.id,
+        candidateId: uniqueId,
         candidateName: displayName,
       });
       const candidateTopics = Array.isArray(candidate.topics) ? candidate.topics : [];
       if (candidateTopics.length) params.append("topics", candidateTopics.join(","));
-      setShowBestWishPopup(true);
+
+      setShowReadyPopup(true);
       window.setTimeout(() => {
         router.push(`/interview?${params.toString()}`);
-      }, 5000);
+      }, 2500);
+    } catch (error) {
+      toast({
+        title: "Selfie verification setup failed",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+      setIsCapturing(false);
+    }
+  };
+
+  const handleCaptureAndContinue = async () => {
+    const selfie = captureSelfie();
+    if (!selfie) {
+      toast({
+        title: "Unable to capture selfie",
+        description: "Please make sure your camera is active and try again.",
+        variant: "destructive",
+      });
       return;
     }
 
-    setIsRedirectingToInterview(false);
+    setCapturedSelfie(selfie);
+    await proceedToInterview(selfie);
   };
 
   return (
     <AppShell>
-      <div className="flex justify-center max-w-4xl mx-auto px-4 py-8">
-        <Card className="w-full border-none shadow-2xl bg-card/50 backdrop-blur-sm overflow-hidden">
-          <CardHeader className="text-center space-y-2 pb-8 border-b bg-muted/30">
-            <div className="mx-auto bg-primary/10 w-16 h-16 rounded-full flex items-center justify-center mb-2">
-              <Scan className="h-8 w-8 text-primary" />
+      <div className="mx-auto flex w-full max-w-5xl justify-center px-4 py-8">
+        <Card className="w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+          <CardHeader className="border-b border-slate-200 bg-slate-50 px-6 py-5">
+            <div className="flex items-start gap-4">
+              <div className="rounded-lg border border-blue-100 bg-blue-50 p-3">
+                <UserCheck className="h-6 w-6 text-[#056BFC]" />
+              </div>
+              <div>
+                <CardTitle className="text-2xl font-black tracking-tight text-slate-900">Selfie Verification</CardTitle>
+                <CardDescription className="mt-1 max-w-2xl text-sm leading-6 text-slate-600">
+                  Capture a clear reference selfie. At the start of the interview, Aura will compare your live camera image with this selfie before allowing the session to continue.
+                </CardDescription>
+              </div>
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight">Identity Verification</CardTitle>
-            <CardDescription className="text-base max-w-md mx-auto">
-              Please verify your Aadhar Identity to begin your AI-Proctored Interview.
-            </CardDescription>
           </CardHeader>
 
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid grid-cols-3 w-full rounded-none h-14 bg-muted/50 p-1">
-              <TabsTrigger value="live-scan" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                <Scan className="mr-2 h-4 w-4" /> Live Scan
-              </TabsTrigger>
-              <TabsTrigger value="upload" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                <Upload className="mr-2 h-4 w-4" /> Manual Upload
-              </TabsTrigger>
-              <TabsTrigger value="mobile" className="data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                <Smartphone className="mr-2 h-4 w-4" /> Mobile Handoff
-              </TabsTrigger>
-            </TabsList>
-
-            <CardContent className="p-8">
-              <TabsContent value="live-scan" className="mt-0 space-y-6">
-                {!hasCameraPermission ? (
-                  <Alert variant="destructive">
-                    <Info className="h-4 w-4" />
-                    <AlertTitle>Camera Required</AlertTitle>
-                    <AlertDescription>
-                      Please enable camera permissions in your browser to proceed with live verification.
-                    </AlertDescription>
-                  </Alert>
-                ) : (
-                  <div className="space-y-6">
-                    <div className="relative aspect-video rounded-2xl overflow-hidden bg-black border-4 border-muted/20 group">
-                      <video autoPlay playsInline muted ref={videoRef} className="w-full h-full object-cover" />
-                      <canvas ref={canvasRef} className="hidden" />
-                      
-                      {/* Scanning Overlay */}
-                      <div className="absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
-                         <div className={`w-2/3 h-1/2 border-2 rounded-xl transition-all duration-500 flex flex-col items-center justify-center
-                           ${isScanning ? "border-primary shadow-[0_0_20px_rgba(59,130,246,0.5)] bg-primary/5" : "border-white/30 border-dashed"}
-                         `}>
-                             {isScanning && <div className="absolute top-0 w-full h-0.5 bg-primary animate-scanner" />}
-                             <div className="text-white/80 text-xs font-medium uppercase tracking-widest mt-auto mb-4 bg-black/40 px-3 py-1 rounded-full backdrop-blur-md">
-                                {isScanning ? "Scanning ID Card..." : "Place ID inside frame"}
-                             </div>
-                         </div>
-                      </div>
-
-                      {isScanning && (
-                         <div className="absolute bottom-4 left-4 right-4 bg-black/60 backdrop-blur-md p-3 rounded-xl border border-white/10">
-                            <div className="flex justify-between items-center mb-2">
-                               <span className="text-xs text-white/80 font-medium tracking-tight">Verification Attempts</span>
-                               <span className="text-xs text-primary font-bold">{scanAttempts} / {MAX_SCAN_ATTEMPTS}</span>
-                            </div>
-                            <Progress value={(scanAttempts/MAX_SCAN_ATTEMPTS)*100} className="h-1.5" />
-                         </div>
-                      )}
+          <CardContent className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.65fr)]">
+            <div className="space-y-4">
+              {!hasCameraPermission ? (
+                <Alert variant="destructive">
+                  <VolumeX className="h-4 w-4" />
+                  <AlertTitle>Camera Required</AlertTitle>
+                  <AlertDescription>Please enable camera permissions to capture your verification selfie.</AlertDescription>
+                </Alert>
+              ) : (
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+                  <div className="relative aspect-video">
+                    <video ref={videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+                    <canvas ref={canvasRef} className="hidden" />
+                    <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                      <div className="h-[58%] w-[38%] rounded-[50%] border-2 border-white/80 shadow-[0_0_0_999px_rgba(15,23,42,0.18)]" />
                     </div>
-
-                    <div className="grid grid-cols-1 gap-4">
-                      {isScanning ? (
-                        <Button variant="outline" size="lg" onClick={() => setIsScanning(false)} className="w-full bg-background hover:bg-muted text-foreground">
-                          Stop Automatic Scan
-                        </Button>
-                      ) : (
-                        <div className="flex gap-3">
-                        <Button size="lg" className="flex-1 shadow-lg" onClick={() => { setScanAttempts(0); setIsScanning(true); }} disabled={isRedirectingToInterview}>
-                          <Scan className="mr-2 h-5 w-5" /> Start Auto-Scan
-                        </Button>
-                          <Button variant="secondary" size="lg" onClick={() => handleCaptureAndVerify()} disabled={isCapturing || isRedirectingToInterview}>
-                             {isCapturing ? <Loader2 className="animate-spin h-5 w-5" /> : <Camera className="h-5 w-5" />}
-                          </Button>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-3 text-sm text-muted-foreground bg-blue-50/50 p-4 rounded-xl border border-blue-100">
-                      <div className="bg-blue-500/10 p-2 rounded-lg">
-                        <Info className="h-4 w-4 text-blue-600" />
-                      </div>
-                      <p><strong>Tip:</strong> Hold the Aadhar card steady in good lighting. Front-side only verification.</p>
+                    <div className="absolute left-3 top-3 rounded-full border border-slate-200 bg-white/90 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-700 shadow-sm">
+                      Live Camera
                     </div>
                   </div>
-                )}
-              </TabsContent>
+                </div>
+              )}
 
-              <TabsContent value="upload" className="mt-0">
-                <div className="flex flex-col items-center justify-center border-2 border-dashed border-muted rounded-2xl p-12 bg-muted/10 hover:bg-muted/20 transition-all cursor-pointer relative group">
-                  <input type="file" accept="image/*" onChange={handleFileUpload} className="absolute inset-0 opacity-0 cursor-pointer" />
-                  <div className="bg-primary/10 p-4 rounded-full mb-4 group-hover:scale-110 transition-transform">
-                      <Upload className="h-10 w-10 text-primary" />
+              <Alert className="border-blue-100 bg-blue-50 text-blue-900">
+                <Info className="h-4 w-4" />
+                <AlertTitle>Selfie quality matters</AlertTitle>
+                <AlertDescription>
+                  Face the camera directly, keep your face inside the oval, use good lighting, and make sure only you are visible.
+                </AlertDescription>
+              </Alert>
+            </div>
+
+            <div className="space-y-4 rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Candidate</p>
+                <h2 className="mt-1 text-lg font-black text-slate-900">{candidateName}</h2>
+                <p className="mt-1 font-mono text-xs font-semibold text-[#056BFC]">{uniqueId}</p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className="h-5 w-5 text-emerald-600" />
+                  <div>
+                    <p className="text-sm font-bold text-slate-900">Identity continuity check</p>
+                    <p className="mt-1 text-xs leading-5 text-slate-500">This selfie will be matched against your live interview camera feed.</p>
                   </div>
-                  <h3 className="text-lg font-semibold mb-2">Upload Aadhar Image</h3>
-                  <p className="text-sm text-muted-foreground text-center max-w-sm mb-6">
-                    Select a high-resolution photo of your Aadhar card front-side. JPEG and PNG supported.
-                  </p>
-                  <Button variant="outline" className="group-hover:bg-primary group-hover:text-white">Choose File</Button>
                 </div>
-              </TabsContent>
+              </div>
 
-              <TabsContent value="mobile" className="mt-0">
-                <div className="flex flex-col items-center p-8 bg-muted/20 rounded-2xl border">
-                  <div className="bg-white p-6 rounded-2xl shadow-xl mb-8 relative">
-                    <div className="w-48 h-48 bg-muted animate-pulse rounded-lg flex items-center justify-center">
-                       <Smartphone className="h-24 w-24 text-muted-foreground/30" />
-                    </div>
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                       <span className="bg-primary text-white text-xs px-2 py-1 rounded">QR Code Placeholder</span>
-                    </div>
-                  </div>
-                  <h3 className="text-xl font-bold mb-4">Scan with your Phone</h3>
-                  <ol className="space-y-3 text-sm text-muted-foreground max-w-xs mb-8">
-                    <li className="flex gap-3"><span className="font-bold text-primary">1.</span> Open your phone camera</li>
-                    <li className="flex gap-3"><span className="font-bold text-primary">2.</span> Scan the QR code above</li>
-                    <li className="flex gap-3"><span className="font-bold text-primary">3.</span> Follow instructions on your mobile device</li>
-                  </ol>
-                  <Button variant="link" className="text-primary hover:no-underline font-bold">Resend verification link via SMS</Button>
+              {capturedSelfie ? (
+                <div className="rounded-lg border border-slate-200 bg-white p-3">
+                  <p className="text-xs font-bold text-slate-500">Captured reference</p>
+                  <img src={capturedSelfie} alt="Captured selfie preview" className="mt-2 aspect-video w-full rounded-md object-cover" />
                 </div>
-              </TabsContent>
-            </CardContent>
-          </Tabs>
+              ) : null}
+            </div>
+          </CardContent>
 
-           <CardFooter className="bg-muted/10 border-t p-6 flex justify-between items-center">
-             <div className="flex items-center gap-6 opacity-60">
-                <div className="flex items-center gap-2">
-                   <div className="w-2 h-2 rounded-full bg-green-500" />
-                   <span className="text-xs font-semibold">SSL SECURE</span>
-                </div>
-                <div className="flex items-center gap-2">
-                   <div className="w-2 h-2 rounded-full bg-blue-500" />
-                   <span className="text-xs font-semibold">AI POWERED</span>
-                </div>
-                <div className="flex items-center gap-2">
-                   <div className="w-2 h-2 rounded-full bg-gray-500" />
-                   <span className="text-xs font-semibold">ISO 27001</span>
-                </div>
-             </div>
-             <div className="flex items-center gap-4">
-               <Button variant="ghost" size="sm" disabled={isRedirectingToInterview} onClick={() => {
-                 if (confirm('Skip identity verification and continue to the interview?')) {
-                   void proceedToInterview();
-                 }
-               }}>
-                 {isRedirectingToInterview ? "Starting Interview..." : "Skip Verification"}
-               </Button>
-             </div>
+          <CardFooter className="flex flex-col gap-3 border-t border-slate-200 bg-slate-50 px-6 py-5 md:flex-row md:items-center md:justify-between">
+            <p className="text-xs leading-5 text-slate-500">
+              By continuing, you consent to selfie capture and identity matching for this interview session.
+            </p>
+            <Button
+              className="h-11 w-full rounded-lg bg-[#056BFC] px-5 font-bold hover:bg-[#024099] md:w-auto"
+              disabled={!hasCameraPermission || isCapturing}
+              onClick={handleCaptureAndContinue}
+            >
+              {isCapturing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />}
+              {isCapturing ? "Preparing Interview..." : "Capture Selfie and Continue"}
+            </Button>
           </CardFooter>
         </Card>
       </div>
-      {showBestWishPopup && (
+
+      {showReadyPopup && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4">
-          <div className="w-full max-w-md rounded-[2rem] bg-white px-8 py-10 text-center shadow-2xl">
-            <p className="text-xs font-black uppercase tracking-[0.35em] text-primary">Interview Ready</p>
-            <h2 className="mt-4 text-3xl font-black tracking-tight text-slate-900">
-              All the Best {candidateName}
-            </h2>
-            <p className="mt-3 text-sm text-slate-500">
-              Your interview will begin automatically in a few seconds.
+          <div className="w-full max-w-md rounded-xl bg-white px-8 py-10 text-center shadow-2xl">
+            <CheckCircle className="mx-auto h-12 w-12 text-emerald-600" />
+            <p className="mt-5 text-xs font-black uppercase tracking-[0.24em] text-[#056BFC]">Reference Selfie Saved</p>
+            <h2 className="mt-3 text-3xl font-black tracking-tight text-slate-900">All the Best {candidateName}</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-500">
+              Your interview will open shortly. Aura will confirm your face match before the first question.
             </p>
           </div>
         </div>
@@ -428,7 +308,7 @@ export default function VerifyAadharPage() {
         </div>
       </AppShell>
     }>
-      <VerifyAadharContent />
+      <SelfieVerificationContent />
     </Suspense>
   );
 }
