@@ -833,21 +833,6 @@ export function InterviewView() {
     );
   }
 
-  if (candidateId && (identityStatus === "pending" || identityStatus === "verifying")) {
-    return (
-      <div className="flex h-full w-full items-center justify-center bg-slate-50 p-4">
-        <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-8 text-center shadow-lg">
-          <Loader2 className="mx-auto h-10 w-10 animate-spin text-[#056BFC]" />
-          <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-[#056BFC]">Identity Verification</p>
-          <h1 className="mt-3 text-2xl font-black text-slate-900">Matching live camera</h1>
-          <p className="mt-3 text-sm leading-6 text-slate-500">
-            {identityMessage || "Please stay centered while Aura verifies your face against the reference selfie."}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   if (candidateId && identityStatus === "failed") {
     return (
       <div className="flex h-full w-full items-center justify-center bg-slate-50 p-4">
@@ -882,6 +867,17 @@ export function InterviewView() {
       {/* hidden proctoring video to keep camera frames even during screen-share */}
       <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
       <div className="flex h-full min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-50 p-3">
+        {candidateId && (identityStatus === "pending" || identityStatus === "verifying") && (
+          <div className="mb-3 flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <div>
+              <p className="font-bold">Verifying identity in the background</p>
+              <p className="mt-0.5 text-blue-700">
+                {identityMessage || "Please stay centered while Aura matches your live camera image."}
+              </p>
+            </div>
+          </div>
+        )}
         <div className="mb-3 flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-primary">Interview Session</p>
