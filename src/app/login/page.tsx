@@ -59,9 +59,7 @@ export default function LoginPage() {
     <div className="grid min-h-screen w-full grid-cols-1 lg:grid-cols-2">
       <div className="hidden lg:flex flex-col items-start justify-center space-y-8 bg-gradient-to-br from-[#056BFC]/20 to-[#3FD534]/30 p-12 text-foreground">
         <div className="flex items-center gap-6">
-          <div className="bg-[#056BFC] p-2 rounded-xl shadow-lg ring-2 ring-white/20">
-             <Image src={organizationLogo} alt="ValueMomentum Logo" className="h-8 w-auto object-contain" />
-          </div>
+          <Image src={organizationLogo} alt="ValueMomentum Logo" className="h-8 w-auto object-contain" />
           <div className="w-px h-10 bg-black/10" />
           <div className="flex items-center gap-2">
              <div className="h-8 w-8 bg-white rounded-lg flex items-center justify-center text-[#056BFC] font-black text-lg shadow-sm">A</div>
@@ -96,7 +94,7 @@ export default function LoginPage() {
       <div className="flex items-center justify-center p-4">
         <Card className="w-full max-w-sm shadow-2xl">
           <CardHeader className="text-center">
-            <div className="mb-4 flex justify-center lg:hidden bg-slate-800 p-2 rounded-md">
+            <div className="mb-4 flex justify-center lg:hidden">
                 <Image src={organizationLogo} alt="Organization Logo" className="h-10 w-auto object-contain" />
             </div>
             <CardTitle className="text-2xl font-bold text-[#303030]">Candidate Login</CardTitle>

@@ -362,7 +362,6 @@ export default function RecruiterPortal() {
             src={organizationLogo}
             alt="ValueMomentum Logo"
             className="h-7 w-auto object-contain"
-            style={{ filter: "brightness(0) saturate(100%) invert(32%) sepia(95%) saturate(3083%) hue-rotate(213deg) brightness(99%) contrast(101%)" }}
           />
           <div className="w-px h-7 bg-slate-200" />
           <div className="flex items-center gap-2">
@@ -506,6 +505,7 @@ export default function RecruiterPortal() {
                         <SelectItem value="Generative AI Engineer">Generative AI Engineer</SelectItem>
                         <SelectItem value="React Engineer">React Engineer</SelectItem>
                         <SelectItem value="Java Engineer">Java Engineer</SelectItem>
+                        <SelectItem value=".NET Developer">.NET Developer</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

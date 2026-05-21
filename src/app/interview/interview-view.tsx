@@ -673,7 +673,6 @@ export function InterviewView() {
               src={organizationLogo}
               alt="ValueMomentum Logo"
               className="h-6 w-auto object-contain"
-              style={{ filter: "brightness(0) saturate(100%) invert(32%) sepia(95%) saturate(3083%) hue-rotate(213deg) brightness(99%) contrast(101%)" }}
             />
             <div className="h-7 w-px bg-slate-200" />
             <div>

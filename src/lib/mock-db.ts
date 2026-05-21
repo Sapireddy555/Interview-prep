@@ -19,6 +19,13 @@ export const MockCandidates = [
     role: "Java Engineer",
     difficulty: "medium",
     topics: ["Spring Boot", "JVM Internals", "Microservices", "Kafka"],
+  },
+  {
+    id: "cand-dotnet-004",
+    name: "Ananya Rao",
+    role: ".NET Developer",
+    difficulty: "medium",
+    topics: ["C#", "ASP.NET Core", "Entity Framework", "Azure", "REST APIs"],
   }
 ];
 

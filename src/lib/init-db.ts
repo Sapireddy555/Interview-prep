@@ -77,6 +77,12 @@ const seedData = [
     role: "Java Engineer",
     difficulty: "medium",
     topics: ["Spring Boot", "JVM Internals", "Microservices", "Kafka"],
+  },
+  {
+    id: "cand-dotnet-004",
+    role: ".NET Developer",
+    difficulty: "medium",
+    topics: ["C#", "ASP.NET Core", "Entity Framework", "Azure", "REST APIs"],
   }
 ];
 

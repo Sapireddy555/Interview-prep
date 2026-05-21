@@ -208,7 +208,10 @@ export function getTechnicalQuestionPool(role: string): string[] {
     "React Engineer": REACT_TECHNICAL_QUESTIONS,
     "Java Engineer": JAVA_TECHNICAL_QUESTIONS,
     "Java Developer": JAVA_TECHNICAL_QUESTIONS,
+    ".NET Engineer": DOTNET_TECHNICAL_QUESTIONS,
     ".NET Developer": DOTNET_TECHNICAL_QUESTIONS,
+    "Dotnet Developer": DOTNET_TECHNICAL_QUESTIONS,
+    "Dotnet Engineer": DOTNET_TECHNICAL_QUESTIONS,
     "DevOps Engineer": DEVOPS_TECHNICAL_QUESTIONS,
     "Software Engineer": SOFTWARE_ENGINEER_TECHNICAL_QUESTIONS,
   };
