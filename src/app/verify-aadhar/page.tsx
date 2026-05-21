@@ -176,6 +176,62 @@ function SelfieVerificationContent() {
     }
   };
 
+  const proceedToInterviewWithoutSelfie = async () => {
+    if (!uniqueId) return;
+    if (!confirm("Skip selfie verification and continue to the interview?")) return;
+
+    setIsCapturing(true);
+
+    try {
+      let candidate = null;
+      try {
+        candidate = await getCandidate(uniqueId);
+      } catch (error) {
+        console.error("Failed to fetch candidate from DB:", error);
+      }
+
+      candidate = candidate || getMockCandidate(uniqueId);
+      if (!candidate) {
+        throw new Error("Candidate details were not found.");
+      }
+
+      const displayName = candidate.name || candidateName || "Candidate";
+      setCandidateName(displayName);
+
+      const sessionResult = await createInterviewSession({
+        id: uniqueId,
+        role: candidate.role,
+        score: 0,
+        duration: "0",
+      });
+
+      if (!sessionResult.success || !sessionResult.id) {
+        throw new Error(sessionResult.error || "Could not create interview session.");
+      }
+
+      const params = new URLSearchParams({
+        role: candidate.role,
+        difficulty: candidate.difficulty,
+        interviewId: sessionResult.id,
+        candidateName: displayName,
+      });
+      const candidateTopics = Array.isArray(candidate.topics) ? candidate.topics : [];
+      if (candidateTopics.length) params.append("topics", candidateTopics.join(","));
+
+      setShowReadyPopup(true);
+      window.setTimeout(() => {
+        router.push(`/interview?${params.toString()}`);
+      }, 2500);
+    } catch (error) {
+      toast({
+        title: "Unable to start interview",
+        description: error instanceof Error ? error.message : "Please try again.",
+        variant: "destructive",
+      });
+      setIsCapturing(false);
+    }
+  };
+
   const handleCaptureAndContinue = async () => {
     const selfie = captureSelfie();
     if (!selfie) {
@@ -271,14 +327,24 @@ function SelfieVerificationContent() {
             <p className="text-xs leading-5 text-slate-500">
               By continuing, you consent to selfie capture and identity matching for this interview session.
             </p>
-            <Button
-              className="h-11 w-full rounded-lg bg-[#056BFC] px-5 font-bold hover:bg-[#024099] md:w-auto"
-              disabled={!hasCameraPermission || isCapturing}
-              onClick={handleCaptureAndContinue}
-            >
-              {isCapturing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />}
-              {isCapturing ? "Preparing Interview..." : "Capture Selfie and Continue"}
-            </Button>
+            <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row">
+              <Button
+                variant="ghost"
+                className="h-11 rounded-lg px-5 font-bold text-slate-600"
+                disabled={isCapturing}
+                onClick={proceedToInterviewWithoutSelfie}
+              >
+                Skip Verification
+              </Button>
+              <Button
+                className="h-11 rounded-lg bg-[#056BFC] px-5 font-bold hover:bg-[#024099]"
+                disabled={!hasCameraPermission || isCapturing}
+                onClick={handleCaptureAndContinue}
+              >
+                {isCapturing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />}
+                {isCapturing ? "Preparing Interview..." : "Capture Selfie and Continue"}
+              </Button>
+            </div>
           </CardFooter>
         </Card>
       </div>
