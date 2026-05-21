@@ -7,12 +7,13 @@ export type InterviewQuestion = {
   prompt: string;
 };
 
-type ResumeProject = {
-  name: string;
-  company: string;
-  period?: string;
-  summary: string;
-};
+import {
+  buildResumeProjectQuestionPrompts,
+  extractResumeProjectsFromText,
+  type ParsedResumeProject,
+} from "@/lib/resume-project-parser";
+
+type ResumeProject = ParsedResumeProject;
 
 export const INTERVIEW_SECTION_TITLES: Record<InterviewSectionId, string> = {
   communication: "Communication and Aptitude",
@@ -188,17 +189,27 @@ function createSectionQuestions(sectionId: InterviewSectionId, prompts: string[]
   }));
 }
 
-function buildResumeProjectQuestions(projects: ResumeProject[]): string[] {
-  const resumeQuestions = projects.flatMap((project) => {
-    const periodText = project.period ? ` during ${project.period}` : "";
-    return [
-      `Your resume shows work on ${project.name} at ${project.company}${periodText}. Walk me through the business problem, your responsibilities, and the outcome.`,
-      `In ${project.name}, what was the toughest technical or delivery challenge you personally handled, and how did you resolve it?`,
-      `Looking back at ${project.name}, what trade-offs did you make, what would you improve now, and why?`,
-    ];
-  });
+function buildResumeProjectQuestions(projects: ResumeProject[], role = "Software Engineer"): string[] {
+  const prompts = buildResumeProjectQuestionPrompts(projects, role, RESUME_PROJECT_QUESTION_COUNT);
+  if (prompts.length > 0) {
+    return prompts.map((prompt) => prompt.replace(/^\[resume_projects\]\s*/i, ""));
+  }
 
-  return resumeQuestions.slice(0, RESUME_PROJECT_QUESTION_COUNT);
+  return projects
+    .flatMap((project) => {
+      const periodText = project.period ? ` during ${project.period}` : "";
+      return [
+        `Your resume shows work on ${project.name} at ${project.company}${periodText}. Walk me through the business problem, your responsibilities, and the outcome.`,
+        `In ${project.name}, what was the toughest technical or delivery challenge you personally handled, and how did you resolve it?`,
+        `Looking back at ${project.name}, what trade-offs did you make, what would you improve now, and why?`,
+      ];
+    })
+    .slice(0, RESUME_PROJECT_QUESTION_COUNT);
+}
+
+export function buildResumeProjectQuestionsFromResumeText(resumeText: string, role: string): string[] {
+  const projects = extractResumeProjectsFromText(resumeText, 2);
+  return buildResumeProjectQuestions(projects, role);
 }
 
 export function getTechnicalQuestionPool(role: string): string[] {
@@ -281,7 +292,7 @@ export function getInterviewQuestionSetForRole(role: string, questionBank?: stri
       ? customQuestions.resume_projects.slice(0, RESUME_PROJECT_QUESTION_COUNT)
       : customQuestions.skipResumeProjects
         ? []
-        : buildResumeProjectQuestions(DEMO_RESUME_PROJECTS);
+        : buildResumeProjectQuestions(DEMO_RESUME_PROJECTS, role);
 
   return [
     ...createSectionQuestions("communication", COMMUNICATION_AND_ATTITUDE_QUESTIONS),

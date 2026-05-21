@@ -7,7 +7,12 @@ import crypto from "crypto";
 import { db } from "@/lib/db";
 import { getInterviewQuestionSetForRole, getQuestionListForRole, getTechnicalQuestionPool } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
-import type { ReviewerScorecard } from "@/lib/types";
+import {
+  buildResumeProjectQuestionPrompts,
+  extractResumeProjectsFromText,
+} from "@/lib/resume-project-parser";
+import { computeSuspicionScoreFromEvents, mergeSuspicionScores } from "@/lib/suspicion-scoring";
+import type { ReviewerScorecard, SecurityEvent } from "@/lib/types";
 
 export async function processInterviewTurn(input: {
   role: string,
@@ -92,6 +97,10 @@ export async function createInterviewSession(
 export async function saveInterviewSession(id: string, session: Omit<InterviewSession, 'id' | 'date' | 'role' | 'summaryReport'>) {
     console.log('Saving interview session:', id);
     try {
+        const securityEvents = (session.securityEvents || []) as SecurityEvent[];
+        const computedSuspicion = computeSuspicionScoreFromEvents(securityEvents);
+        const suspicionScore = mergeSuspicionScores(session.suspicionScore || 0, computedSuspicion);
+
         await db.query(
             `UPDATE sessions SET 
              score = $1, 
@@ -108,12 +117,12 @@ export async function saveInterviewSession(id: string, session: Omit<InterviewSe
                 JSON.stringify(session.feedback || []), 
                 JSON.stringify(session.transcript || []), 
                 JSON.stringify(session.violations || []), 
-                JSON.stringify(session.securityEvents || []),
-                session.suspicionScore || 0,
+                JSON.stringify(securityEvents), 
+                suspicionScore,
                 id
             ]
         );
-        return { success: true, id };
+        return { success: true, id, suspicionScore };
     } catch (error) {
         console.error("DB Error saving session:", error);
         return { success: false, error: String(error) };
@@ -144,17 +153,54 @@ async function getCandidateInterviewAttemptCount(candidateId: string) {
 export async function fetchInterviewQuestionBank(interviewId: string) {
     try {
         const res = await db.query(
-            `SELECT c.question_bank
+            `SELECT c.question_bank, c.resume_text, s.role
              FROM sessions s
              LEFT JOIN candidates c ON c.id = s.candidate_id
              WHERE s.id = $1`,
             [interviewId]
         );
 
-        return { success: true, questionBank: res.rows[0]?.question_bank || "" };
+        const row = res.rows[0];
+        const questionBank = augmentQuestionBankWithResumeProjects(
+            row?.question_bank || "",
+            row?.resume_text || "",
+            row?.role || "Software Engineer"
+        );
+
+        return { success: true, questionBank };
     } catch (error) {
         console.error("Error loading interview question bank:", error);
         return { success: false, questionBank: "", error: String(error) };
+    }
+}
+
+export async function fetchViolationEventsForSession(interviewId: string) {
+    try {
+        const res = await db.query(
+            `SELECT id, session_id, event_ts, event_type, image_url, metadata
+             FROM violation_events
+             WHERE session_id = $1
+             ORDER BY event_ts ASC`,
+            [interviewId]
+        );
+
+        return {
+            success: true,
+            events: res.rows.map((row) => ({
+                id: row.id,
+                sessionId: row.session_id,
+                eventTs:
+                    typeof row.event_ts === "string"
+                        ? row.event_ts
+                        : row.event_ts?.toISOString?.() ?? String(row.event_ts),
+                eventType: row.event_type,
+                imageUrl: row.image_url,
+                metadata: row.metadata ?? {},
+            })),
+        };
+    } catch (error) {
+        console.error("Error loading violation events:", error);
+        return { success: false, events: [], error: String(error) };
     }
 }
 
@@ -519,6 +565,31 @@ function buildJobDescriptionQuestionBank(role: string, jobDescriptionText: strin
     return ["[no_resume_projects]", ...technicalQuestions].join("\n");
 }
 
+function hasGenericResumeProjectQuestions(questionBank: string) {
+    return /choose the project|pick a resume project|pick one of your resume|from one of your resume projects/i.test(
+        questionBank
+    );
+}
+
+function augmentQuestionBankWithResumeProjects(questionBank: string, resumeText: string, role: string) {
+    const resume = compactDocumentText(resumeText);
+    if (!resume) return questionBank;
+
+    const needsReplacement = !questionBank || hasGenericResumeProjectQuestions(questionBank);
+    const projects = extractResumeProjectsFromText(resume, 2);
+    const resumePrompts = buildResumeProjectQuestionPrompts(projects, role, 3);
+    if (!resumePrompts.length) return questionBank;
+
+    if (!needsReplacement) return questionBank;
+
+    const preservedLines = (questionBank || "")
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && !/^\[resume_projects\]/i.test(line) && !/^\[(no_resume_projects|jd_only)\]/i.test(line));
+
+    return [...preservedLines, ...resumePrompts].join("\n");
+}
+
 function buildCandidateQuestionBank(role: string, resumeText: string, jobDescriptionText: string) {
     const resume = compactDocumentText(resumeText);
     const jd = compactDocumentText(jobDescriptionText);
@@ -527,13 +598,22 @@ function buildCandidateQuestionBank(role: string, resumeText: string, jobDescrip
         .slice(0, 5)
         .map((question) => `[technical] ${question}`);
 
-    const resumeQuestions = resume || jd
-        ? [
-            `[resume_projects] Choose the project from your resume that is most relevant to this ${role} role. Walk me through the architecture, your responsibilities, and the technical outcome.`,
-            `[resume_projects] From one of your resume projects, explain the toughest technical problem you personally solved, including the constraints and trade-offs.`,
-            `[resume_projects] Pick a resume project where quality, scale, performance, or reliability mattered. What technical decisions did you make, and what would you improve now?`,
-        ]
-        : [];
+    const projects = extractResumeProjectsFromText(resume, 2);
+    const resumeQuestions = projects.length
+        ? buildResumeProjectQuestionPrompts(projects, role, 3)
+        : resume || jd
+          ? buildResumeProjectQuestionPrompts(
+                [
+                    {
+                        name: "your most relevant project",
+                        company: "your previous team",
+                        summary: jd || resume,
+                    },
+                ],
+                role,
+                3
+            )
+          : [];
 
     return [...technicalQuestions, ...resumeQuestions].join("\n");
 }
@@ -603,6 +683,18 @@ export async function generateAndSaveSummaryReport(interviewId: string) {
   }
 }
 
+function parseReviewerScorecard(value: unknown): ReviewerScorecard | null {
+    if (!value) return null;
+    if (typeof value === "string") {
+        try {
+            return JSON.parse(value) as ReviewerScorecard;
+        } catch {
+            return null;
+        }
+    }
+    return value as ReviewerScorecard;
+}
+
 function normalizeSessionRow(row: any): InterviewSession {
   const normalizedDate =
     typeof row.date === "string"
@@ -626,7 +718,7 @@ function normalizeSessionRow(row: any): InterviewSession {
     violations: row.violations ?? [],
     securityEvents: row.security_events ?? [],
     suspicionScore: row.suspicion_score ?? 0,
-    reviewerScorecard: row.reviewer_scorecard ?? null,
+    reviewerScorecard: parseReviewerScorecard(row.reviewer_scorecard),
     identityStatus: row.identity_status ?? null,
     identityScore: row.identity_score !== undefined && row.identity_score !== null ? Number(row.identity_score) : null,
     identityVerifiedAt:
@@ -854,9 +946,35 @@ async function detectFacesWithAzureFace(image: Buffer, returnFaceId: boolean) {
     return await response.json();
 }
 
+function filterSignificantFaces(faces: any[]) {
+    const parsed = (Array.isArray(faces) ? faces : [])
+        .map((face) => {
+            const rect = face?.faceRectangle;
+            if (!rect?.width || !rect?.height) return null;
+            return {
+                face,
+                area: rect.width * rect.height,
+            };
+        })
+        .filter((entry): entry is { face: any; area: number } => !!entry)
+        .sort((a, b) => b.area - a.area);
+
+    if (parsed.length <= 1) {
+        return parsed.map((entry) => entry.face);
+    }
+
+    const primaryArea = parsed[0].area;
+    return parsed
+        .filter((entry, index) => {
+            if (index === 0) return true;
+            return entry.area >= primaryArea * 0.25;
+        })
+        .map((entry) => entry.face);
+}
+
 async function ensureSingleFaceDetectedWithAzureFace(image: Buffer, label: string) {
-    const faces = await detectFacesWithAzureFace(image, false);
-    if (!Array.isArray(faces) || faces.length === 0) {
+    const faces = filterSignificantFaces(await detectFacesWithAzureFace(image, false));
+    if (faces.length === 0) {
         throw new Error(`${label}: no face was detected. Please face the camera directly in good lighting.`);
     }
     if (faces.length > 1) {
@@ -865,9 +983,9 @@ async function ensureSingleFaceDetectedWithAzureFace(image: Buffer, label: strin
 }
 
 async function detectFaceIdWithAzureFace(image: Buffer, label: string) {
-    const faces = await detectFacesWithAzureFace(image, true);
-    if (!Array.isArray(faces) || faces.length !== 1 || !faces[0]?.faceId) {
-        if (Array.isArray(faces) && faces.length > 1) {
+    const faces = filterSignificantFaces(await detectFacesWithAzureFace(image, true));
+    if (faces.length !== 1 || !faces[0]?.faceId) {
+        if (faces.length > 1) {
             throw new Error(`${label}: multiple faces were detected. Please ensure only the candidate is visible.`);
         }
         throw new Error(`${label}: no face was detected. Please face the camera directly in good lighting.`);

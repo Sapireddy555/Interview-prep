@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { CheckCircle, MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
 import type { InterviewSettings, Message, SecurityEvent } from "@/lib/types";
+import { getSecurityEventWeight } from "@/lib/suspicion-scoring";
 import { useAzureSpeech } from "@/hooks/use-azure-speech";
 import { useToast } from "@/hooks/use-toast";
 import organizationLogo from "@/assets/VMLogoWhite.png";
@@ -58,8 +59,22 @@ export function InterviewView() {
   const violationsRef = useRef<{ timestamp: string; message: string }[]>([]);
   const securityEventsRef = useRef<SecurityEvent[]>([]);
   const suspicionScoreRef = useRef<number>(0);
+  const proctorStrikeRef = useRef<Record<string, number>>({});
+  const lastProctorViolationAtRef = useRef<Record<string, number>>({});
+  const lastSecurityEventAtRef = useRef<Record<string, number>>({});
+  const displaySuspicionScoreRef = useRef(0);
+  const [displaySuspicionScore, setDisplaySuspicionScore] = useState(0);
   const isMountedRef = useRef(true);
   const proctorVideoRef = useRef<HTMLVideoElement>(null);
+
+  const PROCTOR_STRIKES_REQUIRED = 2;
+  const PROCTOR_VIOLATION_COOLDOWN_MS = 45000;
+  const SECURITY_EVENT_COOLDOWN_MS = 45000;
+  const PROCTOR_SUSPICION_WEIGHTS: Record<string, number> = {
+    looking_away: 12,
+    typing: 10,
+    phone_detected: 20,
+  };
   const timerRef = useRef<number | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const autoCloseTimeoutRef = useRef<number | null>(null);
@@ -78,10 +93,27 @@ export function InterviewView() {
     return `${mm}:${ss}`;
   }, []);
 
+  const applySuspicionDelta = useCallback((weight: number) => {
+    if (weight <= 0) return;
+    suspicionScoreRef.current = Math.min(100, suspicionScoreRef.current + weight);
+    displaySuspicionScoreRef.current = suspicionScoreRef.current;
+    setDisplaySuspicionScore(suspicionScoreRef.current);
+  }, []);
+
   const addSecurityEvent = useCallback((type: SecurityEvent["type"], details?: string) => {
     const evt: SecurityEvent = { timestamp: getRelativeTimestamp(), type, details };
     securityEventsRef.current.push(evt);
-  }, [getRelativeTimestamp]);
+
+    const weight = getSecurityEventWeight(type);
+    if (weight <= 0) return;
+
+    const cooldownKey = `${type}:${details ?? ""}`;
+    const lastSeen = lastSecurityEventAtRef.current[cooldownKey] || 0;
+    if (Date.now() - lastSeen < SECURITY_EVENT_COOLDOWN_MS) return;
+
+    lastSecurityEventAtRef.current[cooldownKey] = Date.now();
+    applySuspicionDelta(weight);
+  }, [applySuspicionDelta, getRelativeTimestamp]);
 
   const attachCameraStream = useCallback((stream: MediaStream | null = cameraStreamRef.current) => {
     if (!stream) return;
@@ -190,53 +222,73 @@ export function InterviewView() {
         const dataUri = canvas.toDataURL("image/jpeg");
         try {
           const res = await checkProctoring({ videoFrameDataUri: dataUri });
-          if (res.success && res.data?.hasViolation) {
-            const timestamp = getRelativeTimestamp();
-            violationsRef.current.push({ timestamp, message: res.data.warningMessage });
+          if (!res.success || !res.data?.hasViolation) {
+            proctorStrikeRef.current = {};
+            return;
+          }
+
+          const violationKey = res.data.violationType || "unknown";
+          proctorStrikeRef.current[violationKey] = (proctorStrikeRef.current[violationKey] || 0) + 1;
+          Object.keys(proctorStrikeRef.current).forEach((key) => {
+            if (key !== violationKey) proctorStrikeRef.current[key] = 0;
+          });
+
+          if (proctorStrikeRef.current[violationKey] < PROCTOR_STRIKES_REQUIRED) {
+            return;
+          }
+
+          const lastRecordedAt = lastProctorViolationAtRef.current[violationKey] || 0;
+          if (Date.now() - lastRecordedAt < PROCTOR_VIOLATION_COOLDOWN_MS) {
+            return;
+          }
+
+          lastProctorViolationAtRef.current[violationKey] = Date.now();
+          proctorStrikeRef.current[violationKey] = 0;
+
+          const timestamp = getRelativeTimestamp();
+          violationsRef.current.push({ timestamp, message: res.data.warningMessage });
             const eventType =
               res.data.violationType === "looking_away"
                 ? "proctor_looking_away"
-                : res.data.violationType === "typing"
-                  ? "proctor_typing"
-                  : res.data.violationType === "phone_detected"
-                    ? "proctor_phone_detected"
-                    : "visibility_visible";
+                : res.data.violationType === "phone_detected"
+                  ? "proctor_phone_detected"
+                  : "proctor_looking_away";
             addSecurityEvent(eventType, res.data.violationType);
+            applySuspicionDelta(PROCTOR_SUSPICION_WEIGHTS[violationKey] || 10);
 
-            try {
-              const hiCanvas = document.createElement("canvas");
-              const maxW = Math.min(1280, v.videoWidth || 1280);
-              const maxH = Math.min(720, v.videoHeight || 720);
-              hiCanvas.width = maxW;
-              hiCanvas.height = maxH;
-              const hiCtx = hiCanvas.getContext("2d");
-              if (hiCtx) {
-                hiCtx.drawImage(v, 0, 0, maxW, maxH);
-                hiCanvas.toBlob(async (blob) => {
-                  if (blob && interviewId) {
-                    try {
-                      const formData = new FormData();
-                      formData.append("interviewId", interviewId);
-                      if (candidateId) formData.append("candidateId", candidateId);
-                      formData.append("timestamp", timestamp);
-                      formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
-                      await uploadViolationScreenshot(formData);
-                    } catch (e) {
-                      console.error("Error uploading violation screenshot:", e);
-                    }
+          try {
+            const hiCanvas = document.createElement("canvas");
+            const maxW = Math.min(1280, v.videoWidth || 1280);
+            const maxH = Math.min(720, v.videoHeight || 720);
+            hiCanvas.width = maxW;
+            hiCanvas.height = maxH;
+            const hiCtx = hiCanvas.getContext("2d");
+            if (hiCtx) {
+              hiCtx.drawImage(v, 0, 0, maxW, maxH);
+              hiCanvas.toBlob(async (blob) => {
+                if (blob && interviewId) {
+                  try {
+                    const formData = new FormData();
+                    formData.append("interviewId", interviewId);
+                    if (candidateId) formData.append("candidateId", candidateId);
+                    formData.append("timestamp", timestamp);
+                    formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
+                    await uploadViolationScreenshot(formData);
+                  } catch (e) {
+                    console.error("Error uploading violation screenshot:", e);
                   }
-                }, "image/png", 0.9);
-              }
-            } catch (e) {
-              console.error("Error capturing/uploading hi-res screenshot:", e);
+                }
+              }, "image/png", 0.9);
             }
+          } catch (e) {
+            console.error("Error capturing/uploading hi-res screenshot:", e);
           }
         } catch (err) {
           console.error('Error in proctoring check:', err);
         }
       }
     }
-  }, [addSecurityEvent, candidateId, getRelativeTimestamp, toast, interviewId]);
+  }, [addSecurityEvent, applySuspicionDelta, candidateId, getRelativeTimestamp, interviewId]);
 
   const startFullInterviewRecording = useCallback((stream: MediaStream, id: string) => {
     if (fullInterviewRecorderRef.current?.state === "recording") return;
@@ -432,6 +484,42 @@ export function InterviewView() {
           const widthGap = Math.abs(window.outerWidth - window.innerWidth);
           const heightGap = Math.abs(window.outerHeight - window.innerHeight);
           if (widthGap > 160 || heightGap > 160) addSecurityEvent("devtools_suspected", `gap:${widthGap}x${heightGap}`);
+
+          const screenGap = window.screen.width - window.outerWidth;
+          if (screenGap > 420 && window.outerWidth < window.screen.width * 0.82) {
+            addSecurityEvent("multi_monitor_suspected", `screen:${window.screen.width},window:${window.outerWidth}`);
+          }
+
+          const video = proctorVideoRef.current || videoRef.current;
+          if (video && video.videoWidth > 0 && video.videoHeight > 0) {
+            const aspect = video.videoWidth / video.videoHeight;
+            if (aspect > 2.3 || aspect < 1.15) {
+              addSecurityEvent("screen_share_suspected", `aspect:${aspect.toFixed(2)}`);
+            } else {
+              const sampleCanvas = document.createElement("canvas");
+              sampleCanvas.width = 160;
+              sampleCanvas.height = 90;
+              const sampleCtx = sampleCanvas.getContext("2d");
+              if (sampleCtx) {
+                sampleCtx.drawImage(video, 0, 0, sampleCanvas.width, sampleCanvas.height);
+                const pixels = sampleCtx.getImageData(0, 0, sampleCanvas.width, sampleCanvas.height).data;
+                let darkEdgePixels = 0;
+                let edgePixels = 0;
+                const edgeBands = [0, 1, 2, sampleCanvas.height - 3, sampleCanvas.height - 2, sampleCanvas.height - 1];
+                for (const y of edgeBands) {
+                  for (let x = 0; x < sampleCanvas.width; x++) {
+                    const idx = (y * sampleCanvas.width + x) * 4;
+                    const brightness = (pixels[idx] + pixels[idx + 1] + pixels[idx + 2]) / 3;
+                    edgePixels += 1;
+                    if (brightness < 24) darkEdgePixels += 1;
+                  }
+                }
+                if (edgePixels > 0 && darkEdgePixels / edgePixels > 0.72) {
+                  addSecurityEvent("screen_share_suspected", "letterbox-bars");
+                }
+              }
+            }
+          }
         }, 2000);
 
         // Cleanup handler stored on ref via closure.
@@ -1131,7 +1219,9 @@ export function InterviewView() {
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Violation Monitor</p>
-                      <p className="text-[11px] text-slate-500">{violations.length} events detected</p>
+                      <p className="text-[11px] text-slate-500">
+                        {violations.length} events · Suspicion {displaySuspicionScore}/100
+                      </p>
                     </div>
                     <Button size="sm" variant="ghost" className="rounded-full" onClick={() => setShowViolationsPanel(v => !v)}>
                       {showViolationsPanel ? "Hide" : "Details"}

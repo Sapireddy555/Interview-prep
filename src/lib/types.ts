@@ -33,6 +33,8 @@ export type SecurityEvent = {
     | 'paste'
     | 'context_menu'
     | 'devtools_suspected'
+    | 'screen_share_suspected'
+    | 'multi_monitor_suspected'
     | 'proctor_looking_away'
     | 'proctor_typing'
     | 'proctor_phone_detected';

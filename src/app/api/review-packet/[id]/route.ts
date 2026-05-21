@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { buildInterviewExportPack } from "@/lib/export-pack";
 
 function toMarkdown(session: any): string {
   const report = session.summary_report;
@@ -113,6 +114,24 @@ export async function GET(request: Request, { params }: { params: { id: string }
       headers: {
         "Content-Type": "text/html; charset=utf-8",
         "Content-Disposition": `attachment; filename="review_packet_${id}.html"`,
+      },
+    });
+  }
+
+  if (format === "zip") {
+    const violationRes = await db.query(
+      `SELECT id, session_id, event_ts, event_type, image_url, metadata
+       FROM violation_events
+       WHERE session_id = $1
+       ORDER BY event_ts ASC`,
+      [id]
+    );
+    const { content, filename } = await buildInterviewExportPack(session, violationRes.rows);
+    return new NextResponse(content, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
   }

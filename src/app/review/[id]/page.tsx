@@ -7,8 +7,9 @@ import Link from "next/link";
 import { format, parseISO } from "date-fns";
 
 import { AppShell } from "@/components/app-shell";
-import { fetchInterviewSession, saveReviewerScorecardAction } from "@/app/actions";
+import { fetchInterviewSession, fetchViolationEventsForSession, saveReviewerScorecardAction } from "@/app/actions";
 import type { InterviewSession, Message, ReviewerScorecard } from "@/lib/types";
+import { useToast } from "@/hooks/use-toast";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,9 +19,19 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { PlaceHolderImages } from "@/lib/placeholder-images";
-import { ArrowLeft, BarChart, Clock, FileDown, Loader2, Save, Shield, Star, TrendingUp, Lightbulb } from "lucide-react";
+import { ArrowLeft, BarChart, Clock, FileDown, ImageIcon, Loader2, Save, Shield, Star, TrendingUp, Lightbulb } from "lucide-react";
+
+type ViolationEventRecord = {
+  id: string;
+  sessionId: string;
+  eventTs: string;
+  eventType: string;
+  imageUrl: string;
+  metadata: Record<string, unknown>;
+};
 
 function ReportSkeleton() {
   return (
@@ -46,16 +57,21 @@ function ReportSkeleton() {
 export default function ReportPage() {
   const params = useParams();
   const id = params.id as string;
+  const { toast } = useToast();
   const [session, setSession] = useState<InterviewSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [scorecard, setScorecard] = useState<ReviewerScorecard | null>(null);
+  const [violationEvents, setViolationEvents] = useState<ViolationEventRecord[]>([]);
 
   useEffect(() => {
     if (!id) return;
     const loadSession = async () => {
       setLoading(true);
-      const fetchedSession = await fetchInterviewSession(id);
+      const [fetchedSession, violationResult] = await Promise.all([
+        fetchInterviewSession(id),
+        fetchViolationEventsForSession(id),
+      ]);
       if (fetchedSession) {
         setSession(fetchedSession);
         const reportCompetencies = fetchedSession.summaryReport?.rubric?.competencies ?? [];
@@ -66,6 +82,9 @@ export default function ReportPage() {
             recommendation: fetchedSession.summaryReport?.hiringRecommendation,
           }
         );
+      }
+      if (violationResult.success) {
+        setViolationEvents(violationResult.events);
       }
       setLoading(false);
     };
@@ -88,8 +107,18 @@ export default function ReportPage() {
     setSaving(false);
     if (res.success) {
       const refreshed = await fetchInterviewSession(id);
-      if (refreshed) setSession(refreshed);
+      if (refreshed) {
+        setSession(refreshed);
+        setScorecard(refreshed.reviewerScorecard ?? scorecard);
+      }
+      toast({ title: "Scorecard saved", description: "Reviewer notes and recommendation were stored." });
+      return;
     }
+    toast({
+      title: "Could not save scorecard",
+      description: res.error || "Please try again.",
+      variant: "destructive",
+    });
   };
 
   return (
@@ -122,6 +151,12 @@ export default function ReportPage() {
               <a href={`/api/review-packet/${id}?format=md`}>
                 <FileDown className="h-4 w-4 mr-2" />
                 Packet MD
+              </a>
+            </Button>
+            <Button size="sm" asChild>
+              <a href={`/api/review-packet/${id}?format=zip`}>
+                <FileDown className="h-4 w-4 mr-2" />
+                Export Pack (ZIP)
               </a>
             </Button>
           </div>
@@ -283,6 +318,32 @@ export default function ReportPage() {
                               />
                             </div>
                           ))}
+                          <div className="space-y-2">
+                            <div className="text-sm font-medium">Recommendation</div>
+                            <Select
+                              value={scorecard.recommendation ?? ""}
+                              onValueChange={(value) =>
+                                setScorecard((prev) =>
+                                  prev
+                                    ? {
+                                        ...prev,
+                                        recommendation: value as ReviewerScorecard["recommendation"],
+                                      }
+                                    : prev
+                                )
+                              }
+                            >
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select recommendation" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Strong Hire">Strong Hire</SelectItem>
+                                <SelectItem value="Hire">Hire</SelectItem>
+                                <SelectItem value="Leaning Hire">Leaning Hire</SelectItem>
+                                <SelectItem value="No Hire">No Hire</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
                           <Textarea
                             value={scorecard.overallNotes ?? ""}
                             placeholder="Overall notes"
@@ -361,6 +422,53 @@ export default function ReportPage() {
                       <div className="text-center text-muted-foreground py-12">No transcript available.</div>
                     )}
                   </ScrollArea>
+
+                  <Separator />
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-semibold">Violation Evidence</div>
+                      <Badge variant="outline">{violationEvents.length}</Badge>
+                    </div>
+                    {violationEvents.length ? (
+                      <div className="grid grid-cols-2 gap-2">
+                        {violationEvents.map((event) => (
+                          <a
+                            key={event.id}
+                            href={event.imageUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group overflow-hidden rounded-lg border bg-background"
+                          >
+                            <div className="relative aspect-video bg-muted">
+                              {event.imageUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={event.imageUrl}
+                                  alt={`Violation ${event.id}`}
+                                  className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
+                                />
+                              ) : (
+                                <div className="flex h-full items-center justify-center text-muted-foreground">
+                                  <ImageIcon className="h-5 w-5" />
+                                </div>
+                              )}
+                            </div>
+                            <div className="space-y-1 p-2 text-[11px] text-muted-foreground">
+                              <div className="font-mono">
+                                {Number.isNaN(Date.parse(event.eventTs))
+                                  ? event.eventTs
+                                  : format(parseISO(event.eventTs), "PP pp")}
+                              </div>
+                              <div>{event.eventType}</div>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">No violation screenshots stored for this session.</div>
+                    )}
+                  </div>
 
                   <Separator />
 
