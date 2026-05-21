@@ -593,7 +593,7 @@ async function uploadCandidateDocumentToAzure(candidateId: string, file: File, d
 
         return { url: blockBlobClient.url };
     } catch (error) {
-        console.error(`Failed to upload ${documentType} to Azure:`, error);
+        console.error("Failed to upload %s to Azure:", documentType, error);
         throw new Error(`Failed to upload ${documentType} PDF to Azure Storage.`);
     }
 }
