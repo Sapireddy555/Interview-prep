@@ -106,4 +106,6 @@ export type InterviewSession = {
   identityScore?: number | null;
   identityVerifiedAt?: string | null;
   identityError?: string | null;
+  reportStatus?: "pending" | "generating" | "complete" | "failed" | null;
+  reportError?: string | null;
 };

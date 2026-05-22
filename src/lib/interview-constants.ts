@@ -31,16 +31,6 @@ export const COMMUNICATION_AND_ATTITUDE_QUESTIONS = [
 const TECHNICAL_QUESTION_COUNT = 5;
 const RESUME_PROJECT_QUESTION_COUNT = 3;
 
-const DEMO_RESUME_PROJECTS: ResumeProject[] = [
-  {
-    name: "Assessment and Interview Enablement Platform",
-    company: "ValueMomentum",
-    period: "2020 to present",
-    summary:
-      "A recruiter and candidate workflow platform involving interview orchestration, reviewer collaboration, and cloud-hosted supporting services.",
-  },
-];
-
 const GEN_AI_TECHNICAL_QUESTIONS = [
   "Can you explain the fundamental difference between encoder-only, decoder-only, and encoder-decoder architectures such as BERT, GPT, and T5?",
   "How does multi-head attention work inside a transformer-based model?",
@@ -252,7 +242,25 @@ function normalizeQuestionBank(questionBank?: string | string[]): string[] {
   return questionBankText
     .split(/\r?\n/)
     .map((question: string) => question.trim())
-    .filter(Boolean);
+    .filter(isUsableQuestionBankLine);
+}
+
+function isUsableQuestionBankLine(line: string) {
+  if (!line) return false;
+  if (/^\[(no_resume_projects|jd_only)\]/i.test(line)) return true;
+
+  const untagged = line.replace(/^\[(technical|resume_projects)\]\s*/i, "").trim();
+  if (!untagged || untagged.length > 450) return false;
+  if (/^(resume|curriculum vitae|professional summary|summary|education|skills|experience|projects?|certifications?|contact)\b:?$/i.test(untagged)) {
+    return false;
+  }
+  if (/(?:email|phone|linkedin|github)\s*:/i.test(untagged)) return false;
+
+  return /[?]$/.test(untagged) || /^(tell|describe|explain|walk|discuss|design|implement|how|what|why|when|where|which|can|could|would|if)\b/i.test(untagged);
+}
+
+function shouldUseResumeProjectQuestion(question: string) {
+  return !/(choose|select|pick)\s+(a|one|any)?\s*(resume\s*)?project|project\s+from\s+(your\s+)?resume/i.test(question);
 }
 
 function splitQuestionBankBySection(questionBank?: string | string[]) {
@@ -272,7 +280,10 @@ function splitQuestionBankBySection(questionBank?: string | string[]) {
     const sectionMatch = question.match(/^\[(technical|resume_projects)\]\s*(.+)$/i);
     if (sectionMatch) {
       const sectionId = sectionMatch[1].toLowerCase() as "technical" | "resume_projects";
-      sections[sectionId].push(sectionMatch[2].trim());
+      const prompt = sectionMatch[2].trim();
+      if (sectionId !== "resume_projects" || shouldUseResumeProjectQuestion(prompt)) {
+        sections[sectionId].push(prompt);
+      }
     } else {
       sections.technical.push(question);
     }
@@ -292,7 +303,7 @@ export function getInterviewQuestionSetForRole(role: string, questionBank?: stri
       ? customQuestions.resume_projects.slice(0, RESUME_PROJECT_QUESTION_COUNT)
       : customQuestions.skipResumeProjects
         ? []
-        : buildResumeProjectQuestions(DEMO_RESUME_PROJECTS, role);
+        : [];
 
   return [
     ...createSectionQuestions("communication", COMMUNICATION_AND_ATTITUDE_QUESTIONS),

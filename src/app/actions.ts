@@ -1,6 +1,12 @@
 "use server";
 
+import { after } from "next/server";
 import { extractTextWithADI } from "@/lib/azure-id-verify";
+import {
+  claimReportGeneration,
+  normalizeTranscriptForAnalysis,
+  setReportStatus,
+} from "@/lib/interview-report";
 import { analyzeFrameWithAzure } from "@/lib/azure-vision-proctor";
 import { z } from "zod";
 import crypto from "crypto";
@@ -553,7 +559,7 @@ function buildJobDescriptionQuestionBank(role: string, jobDescriptionText: strin
     const technicalQuestions = jd
         ? [
             `[technical] This test is for ${role}. Based on the uploaded job description, summarize the responsibilities you consider most important and explain your relevant experience.`,
-            `[technical] The job description includes this context: ${jd}. Pick one required skill or responsibility and walk through how you would apply it in a real project.`,
+            `[technical] Pick one required skill or responsibility from the job description and walk through how you would apply it in a real project.`,
             `[technical] Based on the job description, describe the architecture, tools, or process you would use to deliver the core work successfully.`,
             `[technical] What risks, trade-offs, or quality concerns would you watch for while performing the responsibilities described in this job description?`,
             `[technical] How would you measure success for this ${role} test based on the expectations in the job description?`,
@@ -590,9 +596,8 @@ function augmentQuestionBankWithResumeProjects(questionBank: string, resumeText:
     return [...preservedLines, ...resumePrompts].join("\n");
 }
 
-function buildCandidateQuestionBank(role: string, resumeText: string, jobDescriptionText: string) {
+function buildCandidateQuestionBank(role: string, resumeText: string, _jobDescriptionText: string) {
     const resume = compactDocumentText(resumeText);
-    const jd = compactDocumentText(jobDescriptionText);
 
     const technicalQuestions = getTechnicalQuestionPool(role)
         .slice(0, 5)
@@ -601,19 +606,7 @@ function buildCandidateQuestionBank(role: string, resumeText: string, jobDescrip
     const projects = extractResumeProjectsFromText(resume, 2);
     const resumeQuestions = projects.length
         ? buildResumeProjectQuestionPrompts(projects, role, 3)
-        : resume || jd
-          ? buildResumeProjectQuestionPrompts(
-                [
-                    {
-                        name: "your most relevant project",
-                        company: "your previous team",
-                        summary: jd || resume,
-                    },
-                ],
-                role,
-                3
-            )
-          : [];
+        : [];
 
     return [...technicalQuestions, ...resumeQuestions].join("\n");
 }
@@ -636,7 +629,16 @@ export async function checkProctoring(input: { videoFrameDataUri: string }) {
 
 import { analyzeFullInterview } from "@/ai/flows/full-interview-analysis";
 
-export async function generateAndSaveSummaryReport(interviewId: string) {
+export async function runInterviewReportGeneration(interviewId: string) {
+  const claimed = await claimReportGeneration(interviewId);
+  if (!claimed) {
+    return {
+      success: true,
+      skipped: true,
+      message: "Report generation is already in progress or complete.",
+    };
+  }
+
   try {
     const sessionRes = await db.query(
       `SELECT s.*, c.question_bank
@@ -650,21 +652,21 @@ export async function generateAndSaveSummaryReport(interviewId: string) {
       throw new Error("Interview session not found.");
     }
 
+    const transcript = normalizeTranscriptForAnalysis(session.transcript);
+    if (!transcript.length) {
+      throw new Error("Interview transcript is empty. Cannot generate a report.");
+    }
+
     const report = await analyzeFullInterview({
       role: session.role,
-      transcript: (session.transcript || []).map((m: any) => ({
-        role: m.role as 'user' | 'ai',
-        content: m.content,
-        sectionId: m.sectionId,
-        sectionTitle: m.sectionTitle,
-      })),
+      transcript,
     });
 
     report.htmlReport = formatReportToHtml(interviewId, report, session);
 
     await db.query(
-        "UPDATE sessions SET summary_report = $1, score = $2 WHERE id = $3",
-        [JSON.stringify(report), report.overallScore ?? 0, interviewId]
+      "UPDATE sessions SET summary_report = $1, score = $2, report_status = 'complete', report_error = NULL WHERE id = $3",
+      [JSON.stringify(report), report.overallScore ?? 0, interviewId]
     );
 
     let storageWarning: string | undefined;
@@ -677,10 +679,37 @@ export async function generateAndSaveSummaryReport(interviewId: string) {
 
     return { success: true, data: report, storageWarning };
   } catch (error) {
-    console.error("Error generating or saving summary report:", error);
     const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+    console.error("Error generating or saving summary report:", error);
+    await setReportStatus(interviewId, "failed", errorMessage);
     return { success: false, error: errorMessage };
   }
+}
+
+export async function generateAndSaveSummaryReport(interviewId: string) {
+  return runInterviewReportGeneration(interviewId);
+}
+
+export async function finishInterviewAction(input: {
+  interviewId: string;
+  session: Omit<InterviewSession, "id" | "date" | "role" | "summaryReport">;
+}) {
+  const saveResult = await saveInterviewSession(input.interviewId, input.session);
+  if (!saveResult.success) {
+    return { success: false, error: saveResult.error || "Failed to save interview session." };
+  }
+
+  await setReportStatus(input.interviewId, "pending");
+
+  after(async () => {
+    await runInterviewReportGeneration(input.interviewId);
+  });
+
+  return {
+    success: true,
+    reportStatus: "generating" as const,
+    suspicionScore: saveResult.suspicionScore,
+  };
 }
 
 function parseReviewerScorecard(value: unknown): ReviewerScorecard | null {
@@ -728,6 +757,8 @@ function normalizeSessionRow(row: any): InterviewSession {
           ? row.identity_verified_at.toISOString()
           : null,
     identityError: row.identity_error ?? null,
+    reportStatus: row.report_status ?? "pending",
+    reportError: row.report_error ?? null,
   };
 }
 
@@ -878,7 +909,17 @@ async function uploadCandidateSelfieToAzure(candidateId: string, buffer: Buffer,
 async function downloadCandidateSelfieFromAzure(blobName: string) {
     const containerClient = await getCandidateSelfieContainer();
     const blockBlobClient = containerClient.getBlockBlobClient(blobName);
-    return Buffer.from(await blockBlobClient.downloadToBuffer());
+    const timeoutMs = Number(process.env.AZURE_BLOB_DOWNLOAD_TIMEOUT_MS || "20000");
+
+    const downloadPromise = blockBlobClient.downloadToBuffer().then((buffer) => Buffer.from(buffer));
+    const timeoutPromise = new Promise<Buffer>((_, reject) => {
+      setTimeout(
+        () => reject(new Error(`Selfie download timed out after ${Math.round(timeoutMs / 1000)} seconds.`)),
+        timeoutMs
+      );
+    });
+
+    return Promise.race([downloadPromise, timeoutPromise]);
 }
 
 function getAzureFaceConfig() {

@@ -172,8 +172,19 @@ export default function ReportPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                {loading || !session?.summaryReport ? (
+                {loading ? (
                   <ReportSkeleton />
+                ) : !session?.summaryReport ? (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
+                    <p className="font-semibold">Feedback report is not ready yet.</p>
+                    <p className="mt-2 text-amber-800">
+                      Status: {session?.reportStatus ?? "pending"}
+                      {session?.reportError ? ` — ${session.reportError}` : ""}
+                    </p>
+                    <p className="mt-2 text-xs text-amber-700">
+                      Reports are generated in the background after the candidate finishes. Refresh this page in a minute.
+                    </p>
+                  </div>
                 ) : (
                   <div className="space-y-8">
                     <div className="grid gap-4 grid-cols-1 md:grid-cols-3">

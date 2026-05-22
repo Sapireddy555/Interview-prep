@@ -3,7 +3,14 @@
 
 import { useSearchParams } from "next/navigation";
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { saveInterviewSession, checkProctoring, generateAndSaveSummaryReport, uploadRecordingChunk, uploadViolationScreenshot, fetchInterviewQuestionBank, verifyCandidateSelfieAction } from "@/app/actions";
+import {
+  finishInterviewAction,
+  checkProctoring,
+  uploadRecordingChunk,
+  uploadViolationScreenshot,
+  fetchInterviewQuestionBank,
+  verifyCandidateSelfieAction,
+} from "@/app/actions";
 import { getInterviewQuestionSetForRole, INTERVIEW_SECTION_TITLES } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
 import Image from "next/image";
@@ -40,6 +47,7 @@ export function InterviewView() {
   const [identityMessage, setIdentityMessage] = useState("");
   const [showIdentityMatchedPopup, setShowIdentityMatchedPopup] = useState(false);
   const [isCompletingInterview, setIsCompletingInterview] = useState(false);
+  const [reportGenerationMessage, setReportGenerationMessage] = useState("");
   const [consents, setConsents] = useState({
     integrity: false,
     devices: false,
@@ -79,6 +87,16 @@ export function InterviewView() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const autoCloseTimeoutRef = useRef<number | null>(null);
   const completionStartedRef = useRef(false);
+  const identityVerificationStartedRef = useRef(false);
+
+  const withTimeout = useCallback(<T,>(promise: Promise<T>, timeoutMs: number, label: string) => {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        window.setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`)), timeoutMs);
+      }),
+    ]);
+  }, []);
 
   const closeInterviewWindow = useCallback(() => {
     window.open("", "_self");
@@ -346,27 +364,45 @@ export function InterviewView() {
   const stopFullInterviewRecording = useCallback(async () => {
     const recorder = fullInterviewRecorderRef.current;
     if (recorder && recorder.state !== "inactive") {
-      await new Promise<void>((resolve) => {
-        const previousOnStop = recorder.onstop;
-        recorder.onstop = (event) => {
-          previousOnStop?.call(recorder, event);
-          resolve();
-        };
+      await withTimeout(
+        new Promise<void>((resolve) => {
+          const previousOnStop = recorder.onstop;
+          recorder.onstop = (event) => {
+            previousOnStop?.call(recorder, event);
+            resolve();
+          };
 
-        try {
-          recorder.requestData();
-        } catch (error) {
-          console.warn("Unable to request final recording data:", error);
-        }
+          try {
+            recorder.requestData();
+          } catch (error) {
+            console.warn("Unable to request final recording data:", error);
+          }
 
-        recorder.stop();
+          recorder.stop();
+        }),
+        8000,
+        "Recording stop"
+      ).catch((error) => {
+        console.warn("Recording stop timed out, continuing interview completion:", error);
       });
     }
 
-    await recordingUploadChainRef.current;
+    await withTimeout(recordingUploadChainRef.current, 12000, "Recording upload").catch((error) => {
+      console.warn("Recording upload timed out, continuing interview completion:", error);
+    });
+
     if (recordingUploadErrorRef.current) {
-      throw recordingUploadErrorRef.current;
+      console.warn("Recording upload finished with errors:", recordingUploadErrorRef.current);
     }
+  }, [withTimeout]);
+
+  const scheduleBackgroundReportGeneration = useCallback((id: string) => {
+    void fetch(`/api/interviews/${id}/generate-report`, {
+      method: "POST",
+      keepalive: true,
+    }).catch((error) => {
+      console.error("Background report generation request failed:", error);
+    });
   }, []);
 
   const handleInterviewCompletion = async (msgs: Message[] = messages) => {
@@ -374,7 +410,7 @@ export function InterviewView() {
     if (completionStartedRef.current) return;
     completionStartedRef.current = true;
     setIsCompletingInterview(true);
-    let recordingWarning: string | null = null;
+    setReportGenerationMessage("Saving your interview...");
     try {
       let finalMessages = msgs;
       if (isRecordingControlled) {
@@ -398,13 +434,12 @@ export function InterviewView() {
           setMessages(finalMessages);
         }
       }
-      try {
-        await stopFullInterviewRecording();
-      } catch (recordingError) {
-        console.error("Recording upload failed, continuing with interview save:", recordingError);
-        recordingWarning = recordingError instanceof Error ? recordingError.message : String(recordingError);
-      }
-      const durationSeconds = interviewStartTime.current ? Math.max(0, Math.floor((Date.now() - interviewStartTime.current.getTime()) / 1000)) : 0;
+
+      await stopFullInterviewRecording();
+
+      const durationSeconds = interviewStartTime.current
+        ? Math.max(0, Math.floor((Date.now() - interviewStartTime.current.getTime()) / 1000))
+        : 0;
       const sessionPayload = {
         score: 0,
         duration: String(durationSeconds),
@@ -414,22 +449,34 @@ export function InterviewView() {
         securityEvents: securityEventsRef.current,
         suspicionScore: suspicionScoreRef.current || 0,
       };
-      await saveInterviewSession(interviewId, sessionPayload as any);
-      const reportResult = await generateAndSaveSummaryReport(interviewId);
-      if (!reportResult.success) {
-        throw new Error(reportResult.error || "Report generation or upload failed.");
+
+      const finishResult = await finishInterviewAction({
+        interviewId,
+        session: sessionPayload as any,
+      });
+
+      if (!finishResult.success) {
+        throw new Error(finishResult.error || "Failed to finish interview.");
       }
+
+      scheduleBackgroundReportGeneration(interviewId);
+      setReportGenerationMessage("Your feedback report is being generated in the background.");
+      setIsCompletingInterview(false);
       setIsCompleted(true);
-      const storageWarning = recordingWarning || reportResult.storageWarning;
       toast({
-        title: 'Interview saved',
-        description: storageWarning ? 'Session saved. Azure Storage needs attention.' : 'Session data and report saved.',
+        title: "Interview submitted",
+        description: "You can close this window. Your AI feedback report will be ready for reviewers shortly.",
       });
     } catch (err) {
       completionStartedRef.current = false;
       setIsCompletingInterview(false);
-      console.error('Error completing interview', err);
-      toast({ title: 'Save failed', description: 'Could not save interview session', variant: 'destructive' });
+      setReportGenerationMessage("");
+      console.error("Error completing interview", err);
+      toast({
+        title: "Save failed",
+        description: err instanceof Error ? err.message : "Could not save interview session",
+        variant: "destructive",
+      });
     }
   };
   
@@ -574,58 +621,96 @@ export function InterviewView() {
     candidateIdRef.current = candidateId;
   }, [candidateId]);
 
+  const runIdentityVerification = useCallback(async (force = false) => {
+    const activeInterviewId = interviewId || searchParams.get("interviewId");
+    if (!candidateId || !hasAcceptedConsent || !cameraStream || !activeInterviewId) return;
+    if (!force && identityVerificationStartedRef.current) return;
+
+    identityVerificationStartedRef.current = true;
+    let cancelled = false;
+
+    try {
+      setIdentityStatus("verifying");
+      setIdentityMessage("Matching your live camera image with your reference selfie...");
+
+      const liveFrame = await withTimeout(
+        captureFrameFromStream(cameraStream),
+        8000,
+        "Camera frame capture"
+      );
+      if (cancelled) return;
+
+      const result = await withTimeout(
+        verifyCandidateSelfieAction({
+          candidateId,
+          interviewId: activeInterviewId,
+          imageUri: liveFrame,
+        }),
+        30000,
+        "Identity verification"
+      );
+      if (cancelled) return;
+
+      if (result.success && result.matched) {
+        setIdentityStatus("matched");
+        setIdentityMessage(
+          `Identity matched${typeof result.confidence === "number" ? ` (${Math.round(result.confidence * 100)}%)` : ""}.`
+        );
+        setShowIdentityMatchedPopup(true);
+        window.setTimeout(() => setShowIdentityMatchedPopup(false), 2200);
+        return;
+      }
+
+      setIdentityStatus("failed");
+      setIdentityMessage(result.error || result.message || "Identity verification failed.");
+    } catch (error) {
+      if (cancelled) return;
+      setIdentityStatus("failed");
+      setIdentityMessage(error instanceof Error ? error.message : "Identity verification failed.");
+    }
+  }, [
+    cameraStream,
+    candidateId,
+    captureFrameFromStream,
+    hasAcceptedConsent,
+    interviewId,
+    searchParams,
+    withTimeout,
+  ]);
+
   useEffect(() => {
     if (!candidateId) {
       setIdentityStatus("not_required");
+      identityVerificationStartedRef.current = false;
       return;
     }
 
-    if (!hasAcceptedConsent || !cameraStream || !interviewId || identityStatus !== "pending") return;
+    if (!hasAcceptedConsent || !cameraStream) return;
 
-    let cancelled = false;
-    const streamForVerification = cameraStream;
-    const candidateIdForVerification = candidateId;
-    const interviewIdForVerification = interviewId;
+    const activeInterviewId = interviewId || searchParams.get("interviewId");
+    if (!activeInterviewId) return;
 
-    async function verifyIdentity() {
-      try {
-        setIdentityStatus("verifying");
-        setIdentityMessage("Matching your live camera image with your reference selfie...");
-        const liveFrame = await captureFrameFromStream(streamForVerification);
-        if (cancelled) return;
-
-        const result = await verifyCandidateSelfieAction({
-          candidateId: candidateIdForVerification,
-          interviewId: interviewIdForVerification,
-          imageUri: liveFrame,
-        });
-        if (cancelled) return;
-
-        if (result.success && result.matched) {
-          setIdentityStatus("matched");
-          setIdentityMessage(`Identity matched${typeof result.confidence === "number" ? ` (${Math.round(result.confidence * 100)}%)` : ""}.`);
-          setShowIdentityMatchedPopup(true);
-          window.setTimeout(() => setShowIdentityMatchedPopup(false), 2200);
-          return;
-        }
-
-        setIdentityStatus("failed");
-        setIdentityMessage(result.error || result.message || "Identity verification failed.");
-        streamForVerification.getTracks().forEach((track) => track.stop());
-      } catch (error) {
-        if (cancelled) return;
-        setIdentityStatus("failed");
-        setIdentityMessage(error instanceof Error ? error.message : "Identity verification failed.");
-        streamForVerification.getTracks().forEach((track) => track.stop());
-      }
+    if (identityStatus === "matched" || identityStatus === "failed" || identityStatus === "not_required") {
+      return;
     }
 
-    void verifyIdentity();
+    void runIdentityVerification();
+  }, [
+    cameraStream,
+    candidateId,
+    hasAcceptedConsent,
+    identityStatus,
+    interviewId,
+    runIdentityVerification,
+    searchParams,
+  ]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [cameraStream, candidateId, captureFrameFromStream, hasAcceptedConsent, identityStatus, interviewId]);
+  const handleRetryIdentityVerification = () => {
+    identityVerificationStartedRef.current = false;
+    setIdentityStatus("pending");
+    setIdentityMessage("");
+    void runIdentityVerification(true);
+  };
 
   useEffect(() => {
     if (!interviewId || isCompleted) return;
@@ -890,6 +975,9 @@ export function InterviewView() {
            <p className="text-lg text-slate-500 max-w-md leading-relaxed">
              Thank you for your time. Your responses have been securely recorded and submitted for evaluation.
            </p>
+           {reportGenerationMessage ? (
+             <p className="text-sm font-medium text-primary">{reportGenerationMessage}</p>
+           ) : null}
            <div className="pt-8 w-full">
               <Button 
                 size="lg" 
@@ -988,14 +1076,17 @@ export function InterviewView() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
             <VolumeX className="h-6 w-6" />
           </div>
-          <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-red-600">Interview Stopped</p>
-          <h1 className="mt-3 text-2xl font-black text-slate-900">Identity verification failed</h1>
+          <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-red-600">Identity Check Failed</p>
+          <h1 className="mt-3 text-2xl font-black text-slate-900">Face match could not be completed</h1>
           <p className="mt-3 text-sm leading-6 text-slate-500">
             {identityMessage || "Your live camera image did not match the stored reference selfie."}
           </p>
           <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-500">
-            Please contact the TAG team or recruiter for assistance. The interview cannot continue until identity is verified.
+            Ensure your reference selfie exists, Azure Face credentials are configured, and your face is clearly visible with good lighting.
           </p>
+          <Button className="mt-6 w-full" onClick={handleRetryIdentityVerification}>
+            Retry face match
+          </Button>
         </div>
       </div>
     );
@@ -1016,14 +1107,21 @@ export function InterviewView() {
       <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
       <div className="flex h-full min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-50 p-3">
         {candidateId && (identityStatus === "pending" || identityStatus === "verifying") && (
-          <div className="mb-3 flex items-center gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            <div>
-              <p className="font-bold">Verifying identity in the background</p>
-              <p className="mt-0.5 text-blue-700">
-                {identityMessage || "Please stay centered while Aura matches your live camera image."}
-              </p>
+          <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              <div>
+                <p className="font-bold">Verifying identity in the background</p>
+                <p className="mt-0.5 text-blue-700">
+                  {identityMessage || "Please stay centered while Aura matches your live camera image."}
+                </p>
+              </div>
             </div>
+            {identityStatus === "verifying" ? (
+              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleRetryIdentityVerification}>
+                Retry
+              </Button>
+            ) : null}
           </div>
         )}
         <div className="mb-3 flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 md:flex-row md:items-center md:justify-between">
