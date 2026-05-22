@@ -23,6 +23,9 @@ import { useAzureSpeech } from "@/hooks/use-azure-speech";
 import { useToast } from "@/hooks/use-toast";
 import organizationLogo from "@/assets/VMLogoWhite.png";
 
+const FINAL_REPORT_MESSAGE =
+  "Your feedback report is being generated in the background. VM TAG Team will reach out to you shortly!";
+
 export function InterviewView() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
@@ -46,6 +49,7 @@ export function InterviewView() {
   const [identityStatus, setIdentityStatus] = useState<"not_required" | "pending" | "verifying" | "matched" | "failed">("pending");
   const [identityMessage, setIdentityMessage] = useState("");
   const [showIdentityMatchedPopup, setShowIdentityMatchedPopup] = useState(false);
+  const [showCloseInstructionPopup, setShowCloseInstructionPopup] = useState(false);
   const [isCompletingInterview, setIsCompletingInterview] = useState(false);
   const [reportGenerationMessage, setReportGenerationMessage] = useState("");
   const [consents, setConsents] = useState({
@@ -98,9 +102,8 @@ export function InterviewView() {
     ]);
   }, []);
 
-  const closeInterviewWindow = useCallback(() => {
-    window.open("", "_self");
-    window.close();
+  const showCloseInstructions = useCallback(() => {
+    setShowCloseInstructionPopup(true);
   }, []);
 
   const getRelativeTimestamp = useCallback(() => {
@@ -460,7 +463,7 @@ export function InterviewView() {
       }
 
       scheduleBackgroundReportGeneration(interviewId);
-      setReportGenerationMessage("Your feedback report is being generated in the background.");
+      setReportGenerationMessage(FINAL_REPORT_MESSAGE);
       setIsCompletingInterview(false);
       setIsCompleted(true);
       toast({
@@ -654,7 +657,7 @@ export function InterviewView() {
       if (result.success && result.matched) {
         setIdentityStatus("matched");
         setIdentityMessage(
-          `Identity matched${typeof result.confidence === "number" ? ` (${Math.round(result.confidence * 100)}%)` : ""}.`
+          `Identity verified${typeof result.confidence === "number" ? ` (${Math.round(result.confidence * 100)}%)` : ""}.`
         );
         setShowIdentityMatchedPopup(true);
         window.setTimeout(() => setShowIdentityMatchedPopup(false), 2200);
@@ -741,7 +744,7 @@ export function InterviewView() {
     if (!isCompleted) return;
 
     autoCloseTimeoutRef.current = window.setTimeout(() => {
-      closeInterviewWindow();
+      setShowCloseInstructionPopup(true);
     }, 5000);
 
     return () => {
@@ -750,7 +753,7 @@ export function InterviewView() {
         autoCloseTimeoutRef.current = null;
       }
     };
-  }, [closeInterviewWindow, isCompleted]);
+  }, [isCompleted]);
 
   const startControlledRecording = () => {
     if (!audioStream || !interviewId) return;
@@ -961,10 +964,23 @@ export function InterviewView() {
   const currentQuestion = [...messages].reverse().find((message) => message.role === "ai");
   const isMicActive = isRecordingControlled || isListening;
   const allConsentsAccepted = Object.values(consents).every(Boolean);
+  const isIdentityBlocking =
+    Boolean(candidateId) && (identityStatus === "pending" || identityStatus === "verifying");
+  const finalReportMessage = FINAL_REPORT_MESSAGE;
 
   if (isCompleted) {
     return (
-      <div className="flex flex-col items-center justify-center h-full max-w-2xl mx-auto w-full text-center space-y-8 animate-in fade-in zoom-in duration-500">
+      <div className="relative flex h-full w-full flex-col items-center justify-center px-4 text-center animate-in fade-in zoom-in duration-500">
+        {showCloseInstructionPopup && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 px-4">
+            <div className="w-full max-w-md rounded-xl bg-white px-8 py-7 text-center shadow-2xl">
+              <CheckCircle className="mx-auto h-12 w-12 text-emerald-600" />
+              <p className="mt-4 text-xs font-black uppercase tracking-[0.22em] text-emerald-700">Thank You</p>
+              <h2 className="mt-2 text-2xl font-black tracking-tight text-slate-900">Please close this tab</h2>
+              <p className="mt-3 text-sm leading-6 text-slate-500">{finalReportMessage}</p>
+            </div>
+          </div>
+        )}
         <div className="bg-white p-12 rounded-[3rem] shadow-2xl border flex flex-col items-center space-y-6">
            <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-4">
               <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -975,18 +991,16 @@ export function InterviewView() {
            <p className="text-lg text-slate-500 max-w-md leading-relaxed">
              Thank you for your time. Your responses have been securely recorded and submitted for evaluation.
            </p>
-           {reportGenerationMessage ? (
-             <p className="text-sm font-medium text-primary">{reportGenerationMessage}</p>
-           ) : null}
+           <p className="text-sm font-medium text-primary">{reportGenerationMessage || finalReportMessage}</p>
            <div className="pt-8 w-full">
               <Button 
                 size="lg" 
-                onClick={closeInterviewWindow} 
+                onClick={showCloseInstructions} 
                 className="w-full h-16 text-xl font-bold rounded-2xl shadow-xl bg-slate-900 hover:bg-slate-800 transition-all active:scale-95"
               >
                 Close Interview
               </Button>
-              <p className="mt-4 text-xs text-slate-400 font-medium">This window will close automatically in 5 seconds.</p>
+              <p className="mt-4 text-xs text-slate-400 font-medium">Click Close Interview when you are ready to leave.</p>
            </div>
         </div>
       </div>
@@ -1082,9 +1096,37 @@ export function InterviewView() {
             {identityMessage || "Your live camera image did not match the stored reference selfie."}
           </p>
           <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-500">
-            Ensure your reference selfie exists, Azure Face credentials are configured, and your face is clearly visible with good lighting.
+            Ensure your reference selfie exists, Azure Vision credentials are configured, and your face is clearly visible with good lighting.
           </p>
           <Button className="mt-6 w-full" onClick={handleRetryIdentityVerification}>
+            Retry face match
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isIdentityBlocking) {
+    return (
+      <div className="flex h-full w-full items-center justify-center bg-slate-50 p-4">
+        <div className="w-full max-w-lg rounded-xl border border-blue-100 bg-white p-8 text-center shadow-lg">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-blue-50 text-[#056BFC]">
+            <Loader2 className="h-6 w-6 animate-spin" />
+          </div>
+          <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-[#056BFC]">Identity Verification</p>
+          <h1 className="mt-3 text-2xl font-black text-slate-900">Matching your live selfie</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            {identityMessage || "Please stay centered while Aura compares your camera image with your reference selfie."}
+          </p>
+          <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-500">
+            Keep your face clearly visible and avoid moving until the verification completes.
+          </p>
+          <Button
+            className="mt-6 w-full"
+            variant="outline"
+            disabled={identityStatus === "verifying"}
+            onClick={handleRetryIdentityVerification}
+          >
             Retry face match
           </Button>
         </div>
@@ -1106,22 +1148,10 @@ export function InterviewView() {
       {/* hidden proctoring video to keep camera frames even during screen-share */}
       <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
       <div className="flex h-full min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-50 p-3">
-        {candidateId && (identityStatus === "pending" || identityStatus === "verifying") && (
-          <div className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-            <div className="flex items-center gap-3">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              <div>
-                <p className="font-bold">Verifying identity in the background</p>
-                <p className="mt-0.5 text-blue-700">
-                  {identityMessage || "Please stay centered while Aura matches your live camera image."}
-                </p>
-              </div>
-            </div>
-            {identityStatus === "verifying" ? (
-              <Button size="sm" variant="outline" className="h-7 text-[11px]" onClick={handleRetryIdentityVerification}>
-                Retry
-              </Button>
-            ) : null}
+        {candidateId && identityStatus === "matched" && (
+          <div className="mb-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            <p className="font-bold">Identity verified</p>
+            <p className="mt-0.5 text-emerald-700">{identityMessage || "You may continue the interview."}</p>
           </div>
         )}
         <div className="mb-3 flex flex-col gap-2.5 rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 md:flex-row md:items-center md:justify-between">
@@ -1252,8 +1282,8 @@ export function InterviewView() {
 
                 <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Response Controls</p>
-                  <div className="mt-2 grid grid-cols-[1fr_auto_auto] gap-2">
-                    <Button onClick={handleSubmitAnswer} disabled={isCompletingInterview} className="h-9 rounded-lg bg-[#056BFC] px-3 text-xs font-bold hover:bg-[#024099]">
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    <Button onClick={handleSubmitAnswer} disabled={isCompletingInterview} className="h-9 min-w-0 rounded-lg bg-[#056BFC] px-2 text-xs font-bold hover:bg-[#024099]">
                       {isCompletingInterview
                         ? "Saving..."
                         : isRecordingControlled
@@ -1262,10 +1292,10 @@ export function InterviewView() {
                           ? "Finish Interview"
                           : "Submit Answer"}
                     </Button>
-                    <Button onClick={handleRecordToggle} disabled={!audioStream || isCompletingInterview} variant="outline" className="h-9 rounded-lg border-slate-300 px-3 text-xs font-bold">
+                    <Button onClick={handleRecordToggle} disabled={!audioStream || isCompletingInterview} variant="outline" className="h-9 min-w-0 rounded-lg border-slate-300 px-2 text-xs font-bold">
                       {isRecordingControlled ? "Stop" : "Record"}
                     </Button>
-                    <Button onClick={handleSkipQuestion} disabled={isCompletingInterview} variant="ghost" className="h-9 rounded-lg px-3 text-xs font-bold text-slate-600">
+                    <Button onClick={handleSkipQuestion} disabled={isCompletingInterview} variant="ghost" className="h-9 min-w-0 rounded-lg px-2 text-xs font-bold text-slate-600">
                       Skip
                     </Button>
                   </div>

@@ -278,7 +278,7 @@ export async function storeCandidateSelfieAction(input: { candidateId: string; i
             return { success: false, error: "Selfie must be an image." };
         }
 
-        await ensureSingleFaceDetectedWithAzureFace(image.buffer, "Reference selfie");
+        await ensureSinglePersonDetectedWithAzureVision(image.buffer, "Reference selfie");
 
         const upload = await uploadCandidateSelfieToAzure(candidateId, image.buffer, image.contentType);
         await db.query(
@@ -312,23 +312,22 @@ export async function verifyCandidateSelfieAction(input: { candidateId: string; 
 
         const referenceImage = await downloadCandidateSelfieFromAzure(candidate.selfie_blob_name);
         const liveImage = parseDataUri(input.imageUri);
-        const result = await verifyFacesWithAzureFace(referenceImage, liveImage.buffer);
-        const threshold = Number(process.env.AZURE_FACE_MATCH_THRESHOLD || "0.65");
-        const matched = Boolean(result.isIdentical && result.confidence >= threshold);
+        const result = await verifyIdentityPresenceWithAzureVision(referenceImage, liveImage.buffer);
+        const matched = result.matched;
 
         await saveIdentityVerificationResult(
             interviewId,
             matched ? "matched" : "failed",
             result.confidence,
-            matched ? null : "Live selfie did not match the stored reference selfie."
+            matched ? null : result.message
         );
 
         return {
             success: true,
             matched,
             confidence: result.confidence,
-            threshold,
-            message: matched ? "Identity matched." : "Identity verification failed.",
+            threshold: result.threshold,
+            message: result.message,
         };
     } catch (error) {
         console.error("Error verifying candidate selfie:", error);
@@ -933,6 +932,24 @@ function getAzureFaceConfig() {
     return { endpoint, key };
 }
 
+function getAzureVisionConfig() {
+    const endpoint = (
+        process.env.AZURE_VISION_ENDPOINT ||
+        process.env.AZURE_COMPUTER_VISION_ENDPOINT ||
+        ""
+    ).replace(/\/$/, "");
+    const key =
+        process.env.AZURE_VISION_KEY ||
+        process.env.AZURE_COMPUTER_VISION_KEY ||
+        "";
+
+    if (!endpoint || !key) {
+        throw new Error("Azure Vision API is not configured.");
+    }
+
+    return { endpoint, key };
+}
+
 async function fetchWithTimeout(url: string | URL, init: RequestInit, timeoutMs = Number(process.env.AZURE_FACE_TIMEOUT_MS || "15000")) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -952,7 +969,130 @@ async function fetchWithTimeout(url: string | URL, init: RequestInit, timeoutMs 
     }
 }
 
+type VisionPersonDetection = {
+    boundingBox: { x: number; y: number; w: number; h: number };
+    confidence: number;
+    areaRatio: number;
+    centerX: number;
+};
+
+function normalizeVisionBoundingBox(person: any) {
+    const bbox = person?.boundingBox;
+    if (!bbox) return null;
+
+    const x = bbox.x ?? bbox.left ?? 0;
+    const y = bbox.y ?? bbox.top ?? 0;
+    const w = bbox.w ?? bbox.width ?? 0;
+    const h = bbox.h ?? bbox.height ?? 0;
+    if (!w || !h) return null;
+
+    return { x, y, w, h };
+}
+
+function getVisionImageDimensions(result: any) {
+    return {
+        width: result?.metadata?.width ?? result?.imageMetadata?.width ?? result?.width ?? 0,
+        height: result?.metadata?.height ?? result?.imageMetadata?.height ?? result?.height ?? 0,
+    };
+}
+
+function toVisionPersonDetections(result: any): VisionPersonDetection[] {
+    const rawPeople = result?.peopleResult?.values || [];
+    const { width, height } = getVisionImageDimensions(result);
+    const frameArea = width && height ? width * height : 0;
+
+    return (Array.isArray(rawPeople) ? rawPeople : [])
+        .map((person) => {
+            const boundingBox = normalizeVisionBoundingBox(person);
+            if (!boundingBox) return null;
+
+            const confidence = person?.confidence ?? person?.confidenceScore ?? person?.score ?? 1;
+            const areaRatio = frameArea ? (boundingBox.w * boundingBox.h) / frameArea : 0;
+            const centerX = width ? (boundingBox.x + boundingBox.w / 2) / width : 0.5;
+
+            return { boundingBox, confidence, areaRatio, centerX };
+        })
+        .filter((person): person is VisionPersonDetection => !!person)
+        .filter((person) => person.confidence >= Number(process.env.IDENTITY_VISION_MIN_PERSON_CONFIDENCE || "0.5"))
+        .filter((person) => person.areaRatio >= Number(process.env.IDENTITY_VISION_MIN_PERSON_AREA_RATIO || "0.025"))
+        .sort((a, b) => b.areaRatio - a.areaRatio);
+}
+
+async function analyzeIdentityImageWithAzureVision(image: Buffer, label: string) {
+    const { endpoint, key } = getAzureVisionConfig();
+    const url = new URL(`${endpoint}/computervision/imageanalysis:analyze`);
+    url.searchParams.set("features", "People");
+    url.searchParams.set("api-version", "2024-02-01");
+
+    const response = await fetchWithTimeout(url, {
+        method: "POST",
+        headers: {
+            "Ocp-Apim-Subscription-Key": key,
+            "Content-Type": "application/octet-stream",
+        },
+        body: image,
+    }, Number(process.env.AZURE_VISION_TIMEOUT_MS || "15000"));
+
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Azure Vision analysis failed for ${label} (${response.status}): ${errorText}`);
+    }
+
+    const result = await response.json();
+    const people = toVisionPersonDetections(result);
+    const primary = people[0] || null;
+    const secondary = people[1] || null;
+
+    return { people, primary, secondary };
+}
+
+async function ensureSinglePersonDetectedWithAzureVision(image: Buffer, label: string) {
+    const analysis = await analyzeIdentityImageWithAzureVision(image, label);
+    if (!analysis.primary) {
+        throw new Error(`${label}: no person was detected. Please face the camera directly in good lighting.`);
+    }
+
+    const maxSecondAreaRatio = Number(process.env.IDENTITY_VISION_SECOND_PERSON_AREA_RATIO || "0.08");
+    const maxSecondRelativeArea = Number(process.env.IDENTITY_VISION_SECOND_PERSON_RELATIVE_AREA || "0.35");
+    if (
+        analysis.secondary &&
+        (analysis.secondary.areaRatio >= maxSecondAreaRatio ||
+            analysis.secondary.areaRatio >= analysis.primary.areaRatio * maxSecondRelativeArea)
+    ) {
+        throw new Error(`${label}: multiple people were detected. Please ensure only the candidate is visible.`);
+    }
+
+    return analysis.primary;
+}
+
+async function verifyIdentityPresenceWithAzureVision(referenceImage: Buffer, liveImage: Buffer) {
+    const [referencePerson, livePerson] = await Promise.all([
+        ensureSinglePersonDetectedWithAzureVision(referenceImage, "Reference selfie"),
+        ensureSinglePersonDetectedWithAzureVision(liveImage, "Live camera image"),
+    ]);
+
+    const minLiveAreaRatio = Number(process.env.IDENTITY_VISION_MIN_LIVE_AREA_RATIO || "0.04");
+    const minConfidence = Number(process.env.IDENTITY_VISION_MATCH_THRESHOLD || "0.5");
+    const liveCentered = livePerson.centerX >= 0.18 && livePerson.centerX <= 0.82;
+    const liveLargeEnough = livePerson.areaRatio >= minLiveAreaRatio;
+    const confidence = Math.min(referencePerson.confidence, livePerson.confidence);
+    const matched = confidence >= minConfidence && liveCentered && liveLargeEnough;
+
+    return {
+        matched,
+        confidence,
+        threshold: minConfidence,
+        message: matched
+            ? "Identity presence verified with Azure Vision."
+            : "Live camera image could not be verified. Keep your face centered, clearly visible, and ensure only you are in frame.",
+    };
+}
+
 function formatAzureFaceError(status: number, errorText: string) {
+    if (/UnsupportedFeature|facerecognition|Identification,Verification/i.test(errorText)) {
+        return "Azure Face verification is not enabled for this resource. Enable Limited Access approval for Face Identification/Verification at https://aka.ms/facerecognition, or use a Face resource that already has verification access.";
+    }
+
     if (status === 401 || status === 403) {
         return `Azure Face API access denied (${status}). Check the Face API key, endpoint, region, and Limited Access approval for face verification.`;
     }
@@ -1152,15 +1292,15 @@ async function sendCandidateInvitationEmail(input: {
                 `Unique ID: ${input.uniqueId}`,
                 "",
                 "Instructions:",
-                "1. Open the interview link in a quiet room with a stable internet connection.",
-                "2. Enter your unique ID exactly as shown above.",
-                "3. Keep your camera ready for selfie verification.",
-                "4. Allow camera and microphone access when prompted.",
-                "5. Do not use additional devices, screens, notes, or external assistance.",
-                "6. The interview will be recorded and reviewed by the ValueMomentum hiring team.",
+                "Attend the interview from a distraction-free location with a stable internet connection.",
+                "Enter your unique ID carefully, exactly as shared above.",
+                "Keep your camera prepared for the selfie verification step.",
+                "Provide access to your camera and microphone when the browser requests permission.",
+                "The use of additional devices, secondary screens, notes, or external support is strictly prohibited.",
+                "The interview process will be recorded and assessed by the ValueMomentum recruitment team, and further communication will be shared based on your performance in the interview.",
                 "",
                 "Regards,",
-                "ValueMomentum Talent Acquisition",
+                "VM TAG Team",
             ].join("\n"),
             html: `
                 <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6; max-width: 640px;">
@@ -1175,15 +1315,15 @@ async function sendCandidateInvitationEmail(input: {
                     <p><strong>Unique ID:</strong> <code style="font-size: 16px; background: #f1f5f9; padding: 4px 8px; border-radius: 6px;">${escapeHtml(input.uniqueId)}</code></p>
                     <p><a href="${escapeHtml(input.interviewLink)}" style="background: #056BFC; color: white; padding: 12px 18px; border-radius: 8px; text-decoration: none; display: inline-block;">Start Interview</a></p>
                     <h3>Instructions</h3>
-                    <ol>
-                        <li>Open the interview link in a quiet room with a stable internet connection.</li>
-                        <li>Enter your unique ID exactly as shown above.</li>
-                        <li>Keep your camera ready for selfie verification.</li>
-                        <li>Allow camera and microphone access when prompted.</li>
-                        <li>Do not use additional devices, screens, notes, or external assistance.</li>
-                        <li>The interview will be recorded and reviewed by the ValueMomentum hiring team.</li>
-                    </ol>
-                    <p>Regards,<br/><strong>ValueMomentum Talent Acquisition</strong></p>
+                    <ul style="padding-left: 20px; margin: 0 0 18px 0;">
+                        <li>Attend the interview from a distraction-free location with a stable internet connection.</li>
+                        <li>Enter your unique ID carefully, exactly as shared above.</li>
+                        <li>Keep your camera prepared for the selfie verification step.</li>
+                        <li>Provide access to your camera and microphone when the browser requests permission.</li>
+                        <li>The use of additional devices, secondary screens, notes, or external support is strictly prohibited.</li>
+                        <li>The interview process will be recorded and assessed by the ValueMomentum recruitment team, and further communication will be shared based on your performance in the interview.</li>
+                    </ul>
+                    <p>Regards,<br/><strong>VM TAG Team</strong></p>
                     </div>
                 </div>
             `,
