@@ -58,7 +58,7 @@ export function InterviewView() {
     recording: false,
   });
   const [draftResponse, setDraftResponse] = useState("");
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const candidateIdRef = useRef<string | null>(null);
   const interviewStartTime = useRef<Date | null>(null);
@@ -72,12 +72,17 @@ export function InterviewView() {
   const securityEventsRef = useRef<SecurityEvent[]>([]);
   const suspicionScoreRef = useRef<number>(0);
   const proctorStrikeRef = useRef<Record<string, number>>({});
+  const mediaPipeStrikeRef = useRef<Record<string, number>>({});
+  const mediaPipeFaceLandmarkerRef = useRef<any | null>(null);
+  const mediaPipeInitPromiseRef = useRef<Promise<any | null> | null>(null);
+  const mediaPipeDisabledRef = useRef(false);
+  const azureObjectScanTickRef = useRef(0);
   const lastProctorViolationAtRef = useRef<Record<string, number>>({});
   const lastSecurityEventAtRef = useRef<Record<string, number>>({});
   const displaySuspicionScoreRef = useRef(0);
   const [displaySuspicionScore, setDisplaySuspicionScore] = useState(0);
   const isMountedRef = useRef(true);
-  const proctorVideoRef = useRef<HTMLVideoElement>(null);
+  const proctorVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const PROCTOR_STRIKES_REQUIRED = 2;
   const PROCTOR_VIOLATION_COOLDOWN_MS = 45000;
@@ -87,6 +92,7 @@ export function InterviewView() {
     typing: 10,
     phone_detected: 20,
   };
+  const MEDIAPIPE_PROCTOR_STRIKES_REQUIRED = 3;
   const timerRef = useRef<number | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const autoCloseTimeoutRef = useRef<number | null>(null);
@@ -150,6 +156,20 @@ export function InterviewView() {
       });
     }
   }, []);
+
+  const setCandidateVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    videoRef.current = node;
+    if (node && cameraStreamRef.current) {
+      attachCameraStream(cameraStreamRef.current);
+    }
+  }, [attachCameraStream]);
+
+  const setProctorVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    proctorVideoRef.current = node;
+    if (node && cameraStreamRef.current) {
+      attachCameraStream(cameraStreamRef.current);
+    }
+  }, [attachCameraStream]);
 
   const captureFrameFromStream = useCallback(async (stream: MediaStream) => {
     const video = document.createElement("video");
@@ -230,9 +250,209 @@ export function InterviewView() {
   const { isListening, isSpeaking, isVoiceEnabled, currentTranscript, toggleVoice, startContinuous, stopContinuous, resetTranscript } =
     useAzureSpeech(onFinalResult, toast);
 
+  const captureViolationEvidence = useCallback((video: HTMLVideoElement, timestamp: string) => {
+    try {
+      const hiCanvas = document.createElement("canvas");
+      const maxW = Math.min(1280, video.videoWidth || 1280);
+      const maxH = Math.min(720, video.videoHeight || 720);
+      hiCanvas.width = maxW;
+      hiCanvas.height = maxH;
+      const hiCtx = hiCanvas.getContext("2d");
+      if (!hiCtx) return;
+
+      hiCtx.drawImage(video, 0, 0, maxW, maxH);
+      hiCanvas.toBlob(async (blob) => {
+        if (blob && interviewId) {
+          try {
+            const formData = new FormData();
+            formData.append("interviewId", interviewId);
+            if (candidateId) formData.append("candidateId", candidateId);
+            formData.append("timestamp", timestamp);
+            formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
+            await uploadViolationScreenshot(formData);
+          } catch (e) {
+            console.error("Error uploading violation screenshot:", e);
+          }
+        }
+      }, "image/png", 0.9);
+    } catch (e) {
+      console.error("Error capturing/uploading hi-res screenshot:", e);
+    }
+  }, [candidateId, interviewId]);
+
+  const recordProctorViolation = useCallback((
+    video: HTMLVideoElement,
+    violationType: "looking_away" | "phone_detected" | "typing" | "none" | string,
+    warningMessage: string,
+    source: "mediapipe" | "azure"
+  ) => {
+    if (!warningMessage || violationType === "none") return;
+
+    const timestamp = getRelativeTimestamp();
+    violationsRef.current.push({ timestamp, message: warningMessage });
+    const eventType =
+      violationType === "phone_detected"
+        ? "proctor_phone_detected"
+        : violationType === "typing"
+          ? "proctor_typing"
+          : "proctor_looking_away";
+
+    addSecurityEvent(eventType, source);
+    applySuspicionDelta(PROCTOR_SUSPICION_WEIGHTS[violationType] || 10);
+    captureViolationEvidence(video, timestamp);
+  }, [addSecurityEvent, applySuspicionDelta, captureViolationEvidence, getRelativeTimestamp]);
+
+  const getMediaPipeFaceLandmarker = useCallback(async () => {
+    if (mediaPipeDisabledRef.current) return null;
+    if (mediaPipeFaceLandmarkerRef.current) return mediaPipeFaceLandmarkerRef.current;
+    if (mediaPipeInitPromiseRef.current) return mediaPipeInitPromiseRef.current;
+
+    mediaPipeInitPromiseRef.current = (async () => {
+      try {
+        const { FaceLandmarker, FilesetResolver } = await import("@mediapipe/tasks-vision");
+        const vision = await FilesetResolver.forVisionTasks(
+          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm"
+        );
+        const faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+          baseOptions: {
+            modelAssetPath:
+              "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task",
+            delegate: "GPU",
+          },
+          runningMode: "VIDEO",
+          numFaces: 2,
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: false,
+          minFaceDetectionConfidence: 0.55,
+          minFacePresenceConfidence: 0.55,
+          minTrackingConfidence: 0.5,
+        });
+        mediaPipeFaceLandmarkerRef.current = faceLandmarker;
+        return faceLandmarker;
+      } catch (error) {
+        console.warn("MediaPipe proctoring unavailable; continuing with Azure Vision fallback.", error);
+        mediaPipeDisabledRef.current = true;
+        return null;
+      }
+    })();
+
+    return mediaPipeInitPromiseRef.current;
+  }, []);
+
+  const analyzeMediaPipeFaceResult = useCallback((result: any) => {
+    const faces = result?.faceLandmarks || [];
+    if (!Array.isArray(faces) || faces.length === 0) {
+      return {
+        hasViolation: true,
+        violationType: "looking_away",
+        warningMessage: "Please keep your face visible to the camera.",
+      };
+    }
+
+    if (faces.length > 1) {
+      return {
+        hasViolation: true,
+        violationType: "looking_away",
+        warningMessage: "Multiple faces detected. Please ensure you are alone in the frame.",
+      };
+    }
+
+    const landmarks = faces[0] || [];
+    const xs = landmarks.map((point: any) => point.x).filter((value: number) => Number.isFinite(value));
+    const ys = landmarks.map((point: any) => point.y).filter((value: number) => Number.isFinite(value));
+    if (!xs.length || !ys.length) {
+      return {
+        hasViolation: true,
+        violationType: "looking_away",
+        warningMessage: "Please keep your face visible to the camera.",
+      };
+    }
+
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const centerX = (minX + maxX) / 2;
+    const faceWidth = maxX - minX;
+    const faceHeight = maxY - minY;
+
+    if (centerX < 0.22 || centerX > 0.78 || faceWidth < 0.12 || faceHeight < 0.16) {
+      return {
+        hasViolation: true,
+        violationType: "looking_away",
+        warningMessage: "Please face the camera and remain centered during the interview.",
+      };
+    }
+
+    const leftEyeOuter = landmarks[33];
+    const rightEyeOuter = landmarks[263];
+    const noseTip = landmarks[1] || landmarks[4];
+    if (leftEyeOuter && rightEyeOuter && noseTip) {
+      const eyeDistance = Math.abs(rightEyeOuter.x - leftEyeOuter.x);
+      const eyeMidX = (leftEyeOuter.x + rightEyeOuter.x) / 2;
+      const yawProxy = eyeDistance > 0 ? Math.abs(noseTip.x - eyeMidX) / eyeDistance : 0;
+      if (yawProxy > 0.42) {
+        return {
+          hasViolation: true,
+          violationType: "looking_away",
+          warningMessage: "Please keep your attention on the interview screen.",
+        };
+      }
+    }
+
+    return { hasViolation: false, violationType: "none", warningMessage: "" };
+  }, []);
+
+  const runMediaPipeProctoring = useCallback(async () => {
+    if (!isMountedRef.current || mediaPipeDisabledRef.current) return false;
+    const v = proctorVideoRef.current || videoRef.current;
+    if (!v || v.readyState < 3 || !v.videoWidth || !v.videoHeight) return false;
+
+    const faceLandmarker = await getMediaPipeFaceLandmarker();
+    if (!faceLandmarker) return false;
+
+    try {
+      const result = faceLandmarker.detectForVideo(v, performance.now());
+      const analysis = analyzeMediaPipeFaceResult(result);
+      if (!analysis.hasViolation) {
+        mediaPipeStrikeRef.current = {};
+        return true;
+      }
+
+      const violationKey = analysis.violationType || "unknown";
+      mediaPipeStrikeRef.current[violationKey] = (mediaPipeStrikeRef.current[violationKey] || 0) + 1;
+      Object.keys(mediaPipeStrikeRef.current).forEach((key) => {
+        if (key !== violationKey) mediaPipeStrikeRef.current[key] = 0;
+      });
+
+      if (mediaPipeStrikeRef.current[violationKey] < MEDIAPIPE_PROCTOR_STRIKES_REQUIRED) {
+        return true;
+      }
+
+      const lastRecordedAt = lastProctorViolationAtRef.current[`mediapipe:${violationKey}`] || 0;
+      if (Date.now() - lastRecordedAt < PROCTOR_VIOLATION_COOLDOWN_MS) {
+        return true;
+      }
+
+      lastProctorViolationAtRef.current[`mediapipe:${violationKey}`] = Date.now();
+      mediaPipeStrikeRef.current[violationKey] = 0;
+      recordProctorViolation(v, analysis.violationType, analysis.warningMessage, "mediapipe");
+      return true;
+    } catch (error) {
+      console.warn("MediaPipe proctoring check failed; continuing with Azure Vision fallback.", error);
+      return false;
+    }
+  }, [analyzeMediaPipeFaceResult, getMediaPipeFaceLandmarker, recordProctorViolation]);
+
   const runProctoring = useCallback(async () => {
     if (!isMountedRef.current) return;
     const v = proctorVideoRef.current || videoRef.current;
+    const mediaPipeHandledFrame = await runMediaPipeProctoring();
+    if (mediaPipeHandledFrame) {
+      azureObjectScanTickRef.current += 1;
+      if (azureObjectScanTickRef.current % 4 !== 0) return;
+    }
+
     if (v && v.readyState >= 3) {
       const canvas = document.createElement("canvas");
       canvas.width = v.videoWidth;
@@ -266,50 +486,13 @@ export function InterviewView() {
           lastProctorViolationAtRef.current[violationKey] = Date.now();
           proctorStrikeRef.current[violationKey] = 0;
 
-          const timestamp = getRelativeTimestamp();
-          violationsRef.current.push({ timestamp, message: res.data.warningMessage });
-            const eventType =
-              res.data.violationType === "looking_away"
-                ? "proctor_looking_away"
-                : res.data.violationType === "phone_detected"
-                  ? "proctor_phone_detected"
-                  : "proctor_looking_away";
-            addSecurityEvent(eventType, res.data.violationType);
-            applySuspicionDelta(PROCTOR_SUSPICION_WEIGHTS[violationKey] || 10);
-
-          try {
-            const hiCanvas = document.createElement("canvas");
-            const maxW = Math.min(1280, v.videoWidth || 1280);
-            const maxH = Math.min(720, v.videoHeight || 720);
-            hiCanvas.width = maxW;
-            hiCanvas.height = maxH;
-            const hiCtx = hiCanvas.getContext("2d");
-            if (hiCtx) {
-              hiCtx.drawImage(v, 0, 0, maxW, maxH);
-              hiCanvas.toBlob(async (blob) => {
-                if (blob && interviewId) {
-                  try {
-                    const formData = new FormData();
-                    formData.append("interviewId", interviewId);
-                    if (candidateId) formData.append("candidateId", candidateId);
-                    formData.append("timestamp", timestamp);
-                    formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
-                    await uploadViolationScreenshot(formData);
-                  } catch (e) {
-                    console.error("Error uploading violation screenshot:", e);
-                  }
-                }
-              }, "image/png", 0.9);
-            }
-          } catch (e) {
-            console.error("Error capturing/uploading hi-res screenshot:", e);
-          }
+          recordProctorViolation(v, res.data.violationType, res.data.warningMessage, "azure");
         } catch (err) {
           console.error('Error in proctoring check:', err);
         }
       }
     }
-  }, [addSecurityEvent, applySuspicionDelta, candidateId, getRelativeTimestamp, interviewId]);
+  }, [recordProctorViolation, runMediaPipeProctoring]);
 
   const startFullInterviewRecording = useCallback((stream: MediaStream, id: string) => {
     if (fullInterviewRecorderRef.current?.state === "recording") return;
@@ -609,6 +792,13 @@ export function InterviewView() {
         if (controlledRecorderRef.current && controlledRecorderRef.current.state !== "inactive") {
           controlledRecorderRef.current.stop();
         }
+        try {
+          mediaPipeFaceLandmarkerRef.current?.close?.();
+        } catch (error) {
+          console.warn("Unable to close MediaPipe face landmarker:", error);
+        }
+        mediaPipeFaceLandmarkerRef.current = null;
+        mediaPipeInitPromiseRef.current = null;
         void stopFullInterviewRecording();
         cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
         cameraStreamRef.current = null;
@@ -1118,6 +1308,15 @@ export function InterviewView() {
           <p className="mt-3 text-sm leading-6 text-slate-500">
             {identityMessage || "Please stay centered while Aura compares your camera image with your reference selfie."}
           </p>
+          <div className="mt-5 overflow-hidden rounded-lg border border-slate-200 bg-slate-100">
+            <video
+              ref={setCandidateVideoRef}
+              className="aspect-video w-full object-cover"
+              autoPlay
+              muted
+              playsInline
+            />
+          </div>
           <p className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-5 text-slate-500">
             Keep your face clearly visible and avoid moving until the verification completes.
           </p>
@@ -1146,7 +1345,7 @@ export function InterviewView() {
         </div>
       )}
       {/* hidden proctoring video to keep camera frames even during screen-share */}
-      <video ref={proctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
+      <video ref={setProctorVideoRef} style={{ display: 'none' }} autoPlay muted playsInline />
       <div className="flex h-full min-h-0 flex-col rounded-xl border border-slate-200 bg-slate-50 p-3">
         {candidateId && identityStatus === "matched" && (
           <div className="mb-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
@@ -1182,7 +1381,7 @@ export function InterviewView() {
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="relative aspect-[4/3.95] bg-slate-100">
                 <video
-                  ref={videoRef}
+                  ref={setCandidateVideoRef}
                   className="h-full w-full object-cover"
                   autoPlay
                   muted

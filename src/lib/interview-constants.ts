@@ -294,20 +294,29 @@ function splitQuestionBankBySection(questionBank?: string | string[]) {
 
 export function getInterviewQuestionSetForRole(role: string, questionBank?: string | string[]): InterviewQuestion[] {
   const customQuestions = splitQuestionBankBySection(questionBank);
+  const technicalPool = getTechnicalQuestionPool(role);
   const technicalQuestions =
     customQuestions.technical.length > 0
       ? customQuestions.technical.slice(0, TECHNICAL_QUESTION_COUNT)
-      : getTechnicalQuestionPool(role).slice(0, TECHNICAL_QUESTION_COUNT);
+      : technicalPool.slice(0, TECHNICAL_QUESTION_COUNT);
   const resumeProjectQuestions =
     customQuestions.resume_projects.length > 0
       ? customQuestions.resume_projects.slice(0, RESUME_PROJECT_QUESTION_COUNT)
       : customQuestions.skipResumeProjects
         ? []
         : [];
+  const fallbackTechnicalQuestions =
+    resumeProjectQuestions.length === 0
+      ? (customQuestions.technical.length > TECHNICAL_QUESTION_COUNT
+          ? customQuestions.technical.slice(TECHNICAL_QUESTION_COUNT, TECHNICAL_QUESTION_COUNT + RESUME_PROJECT_QUESTION_COUNT)
+          : technicalPool
+              .filter((question) => !technicalQuestions.includes(question))
+              .slice(0, RESUME_PROJECT_QUESTION_COUNT))
+      : [];
 
   return [
     ...createSectionQuestions("communication", COMMUNICATION_AND_ATTITUDE_QUESTIONS),
-    ...createSectionQuestions("technical", technicalQuestions),
+    ...createSectionQuestions("technical", [...technicalQuestions, ...fallbackTechnicalQuestions]),
     ...createSectionQuestions("resume_projects", resumeProjectQuestions),
   ];
 }

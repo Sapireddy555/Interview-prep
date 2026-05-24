@@ -22,6 +22,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 import { PlaceHolderImages } from "@/lib/placeholder-images";
+import { getSecurityEventLabel, getSecurityRiskLevel } from "@/lib/suspicion-scoring";
 import { ArrowLeft, BarChart, Clock, FileDown, ImageIcon, Loader2, Save, Shield, Star, TrendingUp, Lightbulb } from "lucide-react";
 
 type ViolationEventRecord = {
@@ -99,6 +100,8 @@ export default function ReportPage() {
     .map((message, index) => ({ ...message, feedback: session?.feedback?.[index] ?? null }));
 
   const feedbackMap = new Map(userMessagesWithFeedback?.map((m) => [m.id, m.feedback]));
+  const suspicionScore = session?.suspicionScore ?? 0;
+  const riskLevel = getSecurityRiskLevel(suspicionScore);
 
   const handleSaveScorecard = async () => {
     if (!scorecard) return;
@@ -389,7 +392,12 @@ export default function ReportPage() {
                       <Shield className="h-4 w-4 text-muted-foreground" />
                     </CardHeader>
                     <CardContent className="p-0">
-                      <div className="text-2xl font-bold">{session?.suspicionScore ?? 0}/100</div>
+                      <div className="flex items-center gap-2">
+                        <div className="text-2xl font-bold">{suspicionScore}/100</div>
+                        <Badge variant={riskLevel === "critical" || riskLevel === "high" ? "destructive" : "outline"}>
+                          {riskLevel.toUpperCase()}
+                        </Badge>
+                      </div>
                       <p className="text-xs text-muted-foreground mt-1">
                         Heuristic signals: tab switching, focus loss, clipboard events, proctoring warnings.
                       </p>
@@ -495,7 +503,7 @@ export default function ReportPage() {
                             .map((e, i) => (
                               <div key={i} className="flex justify-between gap-2">
                                 <span className="font-mono">{e.timestamp}</span>
-                                <span className="flex-1">{e.type}</span>
+                                <span className="flex-1">{getSecurityEventLabel(e.type)}</span>
                               </div>
                             ))
                         ) : (

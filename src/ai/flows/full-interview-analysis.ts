@@ -95,6 +95,8 @@ const analysisPrompt = ai.definePrompt({
   7. Provide a final overall score (0-100) and a clear hiring recommendation.
   8. Provide a competency-based rubric with scores (0-100) and concrete evidence quotes/paraphrases from the transcript.
   9. Set htmlReport to an empty string.
+  10. If a question has no following user answer, treat it as skipped/unanswered, assign 0 for that question, and do not describe knowledge or strengths that were not demonstrated.
+  11. If the candidate provided no substantive answers at all, overallScore must be 0 and hiringRecommendation must be "No Hire".
 
   Format your final report as purely valid JSON matching the output schema.`,
 });
@@ -160,8 +162,79 @@ Rules:
 - Return JSON only.
 - Set htmlReport to an empty string.
 - Score every question asked by the interviewer.
+- If a question has no following user answer, treat it as skipped/unanswered, assign 0 for that question, and do not describe knowledge or strengths that were not demonstrated.
+- If the candidate provided no substantive answers at all, overallScore must be 0 and hiringRecommendation must be "No Hire".
 - Include only section IDs that appear in the transcript. Do not invent Resume Projects feedback when no resume-project questions were asked.
 - Use concrete transcript evidence where possible.`;
+}
+
+function hasSubstantiveUserAnswer(input: FullInterviewAnalysisInput) {
+  return input.transcript.some((message) => message.role === 'user' && message.content.trim().length > 0);
+}
+
+function buildNoAnswerAnalysis(input: FullInterviewAnalysisInput): FullInterviewAnalysisOutput {
+  const questions = input.transcript.filter((message) => message.role === 'ai');
+  const sectionMap = new Map<string, { sectionId: 'communication' | 'technical' | 'resume_projects'; sectionTitle: string }>();
+
+  for (const question of questions) {
+    if (!question.sectionId || !question.sectionTitle) continue;
+    sectionMap.set(question.sectionId, {
+      sectionId: question.sectionId,
+      sectionTitle: question.sectionTitle,
+    });
+  }
+
+  return {
+    overallScore: 0,
+    summary: "The candidate did not provide any substantive answers. The interview cannot demonstrate role readiness, technical knowledge, communication ability, or project ownership.",
+    strengths: [],
+    weaknesses: [
+      "No answers were submitted for evaluation.",
+      "The candidate skipped the interview questions, so no technical or behavioral evidence was available.",
+    ],
+    htmlReport: "",
+    sectionFeedback: Array.from(sectionMap.values()).map((section) => ({
+      sectionId: section.sectionId,
+      sectionTitle: section.sectionTitle,
+      score: 0,
+      summary: "No substantive answers were provided in this section.",
+      strengths: [],
+      improvements: ["Answer the questions directly with concrete examples, decisions, trade-offs, and outcomes."],
+    })),
+    rubric: {
+      competencies: [
+        "Problem Solving",
+        "Technical Depth",
+        "Communication",
+        "Clarity & Structure",
+        "Practicality",
+        "Collaboration",
+        "Ownership",
+        "Behavioral Signals",
+      ].map((name) => ({
+        name: name as FullInterviewAnalysisOutput["rubric"]["competencies"][number]["name"],
+        score: 0,
+        evidence: [
+          {
+            quote: "No candidate answer was provided.",
+            speaker: "user" as const,
+            whyItMatters: "Without a response, this competency cannot be demonstrated.",
+          },
+        ],
+      })),
+      overallNotes: "All questions were skipped or unanswered. Scores are set to 0 because there is no candidate evidence to evaluate.",
+    },
+    technicalFeedback: "No technical answers were provided, so technical knowledge could not be assessed.",
+    behavioralFeedback: "No substantive communication or behavioral examples were provided.",
+    questionFeedback: questions.map((question) => ({
+      question: question.content,
+      sectionTitle: question.sectionTitle || "General",
+      feedback: "No answer was provided for this question.",
+      score: 0,
+      evidence: [{ quote: "No candidate answer was provided.", speaker: "user" as const }],
+    })),
+    hiringRecommendation: "No Hire",
+  };
 }
 
 async function analyzeWithGemini(input: FullInterviewAnalysisInput) {
@@ -181,6 +254,10 @@ async function analyzeWithAzureOpenAI(input: FullInterviewAnalysisInput) {
 }
 
 export async function analyzeFullInterview(input: FullInterviewAnalysisInput): Promise<FullInterviewAnalysisOutput> {
+  if (!hasSubstantiveUserAnswer(input)) {
+    return buildNoAnswerAnalysis(input);
+  }
+
   const preferAzure = process.env.AI_PRIMARY_PROVIDER?.toLowerCase() === 'azure';
   const providers = preferAzure
     ? [analyzeWithAzureOpenAI, analyzeWithGemini]
