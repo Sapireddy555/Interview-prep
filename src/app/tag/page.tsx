@@ -434,7 +434,7 @@ export default function RecruiterPortal() {
                   ]
                 : [
                     ["Name the Test", "Use the correct test or role name shown to candidates."],
-                    ["Set Level", "Choose easy, medium, or hard for the assessment."],
+                    ["Set Level", "Choose Beginner, Intermediate, or Expert for the assessment."],
                     ["Add Emails and JD", "Candidates receive common/aptitude and JD-based technical questions."],
                   ]).map(([title, description], index) => (
                 <div key={title} className="flex gap-3 items-start">
@@ -517,9 +517,9 @@ export default function RecruiterPortal() {
                         <SelectValue placeholder="Select difficulty" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="easy">Easy (Fundamentals)</SelectItem>
-                        <SelectItem value="medium">Medium (Standard)</SelectItem>
-                        <SelectItem value="hard">Hard (Advanced / Architect)</SelectItem>
+                        <SelectItem value="easy">Beginner (0-3 years)</SelectItem>
+                        <SelectItem value="medium">Intermediate (3-6 years)</SelectItem>
+                        <SelectItem value="hard">Expert (6+ years)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -591,9 +591,9 @@ export default function RecruiterPortal() {
                         <SelectValue placeholder="Select level" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="easy">Easy</SelectItem>
-                        <SelectItem value="medium">Medium</SelectItem>
-                        <SelectItem value="hard">Hard</SelectItem>
+                        <SelectItem value="easy">Beginner (0-3 years)</SelectItem>
+                        <SelectItem value="medium">Intermediate (3-6 years)</SelectItem>
+                        <SelectItem value="hard">Expert (6+ years)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
