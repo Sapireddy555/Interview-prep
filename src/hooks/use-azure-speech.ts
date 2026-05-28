@@ -84,7 +84,7 @@ export const useAzureSpeech = (
       const { token, region } = await res.json();
 
       const speechConfig = SpeechSDK.SpeechConfig.fromAuthorizationToken(token, region);
-      speechConfig.speechRecognitionLanguage = "en-US";
+      speechConfig.speechRecognitionLanguage = "en-IN";
       speechConfig.outputFormat = SpeechSDK.OutputFormat.Detailed;
       speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "10000");
       speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "1800");
@@ -133,6 +133,28 @@ export const useAzureSpeech = (
 
   const preferredVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
 
+  const selectIndianEnglishVoice = useCallback(() => {
+    if (!window.speechSynthesis) return null;
+    const voices = window.speechSynthesis.getVoices();
+    const voice =
+      voices.find((v) => v.lang === "en-IN" && /neural|natural|online/i.test(v.name)) ||
+      voices.find((v) => v.lang === "en-IN") ||
+      voices.find((v) => /india|indian|heera|ravi|neerja|prabhat/i.test(v.name)) ||
+      voices.find((v) => v.lang.startsWith("en-"));
+
+    preferredVoiceRef.current = voice || null;
+    return preferredVoiceRef.current;
+  }, []);
+
+  useEffect(() => {
+    if (!window.speechSynthesis) return;
+    selectIndianEnglishVoice();
+    window.speechSynthesis.onvoiceschanged = selectIndianEnglishVoice;
+    return () => {
+      window.speechSynthesis.onvoiceschanged = null;
+    };
+  }, [selectIndianEnglishVoice]);
+
   const speak = useCallback((text: string) => {
     if (!isVoiceEnabled || !window.speechSynthesis) return;
     
@@ -140,17 +162,12 @@ export const useAzureSpeech = (
     void stopContinuous();
 
     const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-IN";
+    utterance.rate = 0.94;
+    utterance.pitch = 1;
     
     if (!preferredVoiceRef.current) {
-        const voices = window.speechSynthesis.getVoices();
-        // Priority: Google US English -> Microsoft Aria -> Natural -> first English voice
-        const voice = 
-            voices.find(v => v.name === "Google US English") || 
-            voices.find(v => v.name.includes("Aria")) ||
-            voices.find(v => v.name.includes("Natural")) ||
-            voices.find(v => v.lang.startsWith("en-"));
-        
-        if (voice) preferredVoiceRef.current = voice;
+      selectIndianEnglishVoice();
     }
 
     if (preferredVoiceRef.current) {
@@ -165,7 +182,7 @@ export const useAzureSpeech = (
     };
     
     window.speechSynthesis.speak(utterance);
-  }, [isVoiceEnabled, startContinuous, stopContinuous]);
+  }, [isVoiceEnabled, selectIndianEnglishVoice, startContinuous, stopContinuous]);
 
   const toggleVoice = () => {
     if (isSpeaking) {

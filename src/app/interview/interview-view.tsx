@@ -16,7 +16,24 @@ import type { InterviewQuestion } from "@/lib/interview-constants";
 import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { CheckCircle, MicOff, Volume2, VolumeX, Loader2 } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  Bot,
+  Camera,
+  CheckCircle,
+  Clock,
+  FileCheck2,
+  Loader2,
+  Mic,
+  MicOff,
+  NotebookPen,
+  Radio,
+  ShieldCheck,
+  UserRound,
+  Volume2,
+  VolumeX,
+} from "lucide-react";
 import type { InterviewSettings, Message, SecurityEvent } from "@/lib/types";
 import { getSecurityEventWeight } from "@/lib/suspicion-scoring";
 import { useAzureSpeech } from "@/hooks/use-azure-speech";
@@ -52,6 +69,7 @@ export function InterviewView() {
   const [showCloseInstructionPopup, setShowCloseInstructionPopup] = useState(false);
   const [isCompletingInterview, setIsCompletingInterview] = useState(false);
   const [reportGenerationMessage, setReportGenerationMessage] = useState("");
+  const [candidateNotes, setCandidateNotes] = useState("");
   const [consents, setConsents] = useState({
     integrity: false,
     devices: false,
@@ -83,6 +101,11 @@ export function InterviewView() {
   const [displaySuspicionScore, setDisplaySuspicionScore] = useState(0);
   const isMountedRef = useRef(true);
   const proctorVideoRef = useRef<HTMLVideoElement | null>(null);
+  const runProctoringRef = useRef<() => Promise<void>>(async () => {});
+  const addSecurityEventRef = useRef<(type: SecurityEvent["type"], details?: string) => void>(() => {});
+  const startFullInterviewRecordingRef = useRef<(stream: MediaStream, id: string) => void>(() => {});
+  const stopFullInterviewRecordingRef = useRef<() => Promise<void>>(async () => {});
+  const lastSpokenQuestionIdRef = useRef<string | null>(null);
 
   const PROCTOR_STRIKES_REQUIRED = 2;
   const PROCTOR_VIOLATION_COOLDOWN_MS = 45000;
@@ -141,6 +164,10 @@ export function InterviewView() {
     lastSecurityEventAtRef.current[cooldownKey] = Date.now();
     applySuspicionDelta(weight);
   }, [applySuspicionDelta, getRelativeTimestamp]);
+
+  useEffect(() => {
+    addSecurityEventRef.current = addSecurityEvent;
+  }, [addSecurityEvent]);
 
   const attachCameraStream = useCallback((stream: MediaStream | null = cameraStreamRef.current) => {
     if (!stream) return;
@@ -214,7 +241,12 @@ export function InterviewView() {
     .padStart(2, "0")}:${(remainingSeconds % 60).toString().padStart(2, "0")}`;
 
   const currentQuestionMeta = questionListState[currentQuestionIndex];
+  const currentQuestion = [...messages].reverse().find((message) => message.role === "ai");
   const currentSectionTitle = currentQuestionMeta?.sectionTitle || INTERVIEW_SECTION_TITLES.communication;
+  const allConsentsAccepted = Object.values(consents).every(Boolean);
+  const isIdentityBlocking =
+    Boolean(candidateId) && (identityStatus === "pending" || identityStatus === "verifying");
+  const finalReportMessage = FINAL_REPORT_MESSAGE;
   const timerTone =
     remainingSeconds <= 10 * 60
       ? {
@@ -234,21 +266,127 @@ export function InterviewView() {
             value: "text-emerald-700",
           };
 
+  const onFinalResult = useCallback((text: string) => {
+    setDraftResponse(text.trim());
+  }, []);
+
+  const { isListening, isSpeaking, isVoiceEnabled, currentTranscript, toggleVoice, speak, startContinuous, stopContinuous, resetTranscript } =
+    useAzureSpeech(onFinalResult, toast);
+
+  const isMicActive = isRecordingControlled || isListening;
+
   const sectionQuestionCounts = questionListState.reduce<Record<string, number>>((acc, question) => {
     acc[question.sectionTitle] = (acc[question.sectionTitle] || 0) + 1;
     return acc;
   }, {});
 
+  const questionProgressPercent = totalQuestionCount
+    ? Math.min(100, Math.round(((currentQuestionIndex + 1) / totalQuestionCount) * 100))
+    : 0;
+
   const currentSectionQuestionNumber = questionListState
     .slice(0, currentQuestionIndex + 1)
     .filter((question) => question.sectionTitle === currentSectionTitle).length;
 
-  const onFinalResult = useCallback((text: string) => {
-    setDraftResponse(text.trim());
-  }, []);
+  const visibleSecurityEvents = securityEventsRef.current.slice(-3).reverse();
+  const proctorStatusItems = [
+    {
+      label: "Face visible",
+      status: hasCameraPermission && cameraStream ? "Tracking" : "Unavailable",
+      ok: hasCameraPermission && Boolean(cameraStream),
+      icon: Camera,
+    },
+    {
+      label: "Camera active",
+      status: hasCameraPermission ? "On" : "Blocked",
+      ok: hasCameraPermission,
+      icon: Camera,
+    },
+    {
+      label: "Mic active",
+      status: audioStream ? (isMicActive ? "Listening" : "Ready") : "Unavailable",
+      ok: Boolean(audioStream),
+      icon: Mic,
+    },
+    {
+      label: "Environment",
+      status: displaySuspicionScore >= 50 ? "Review" : displaySuspicionScore >= 20 ? "Watch" : "Clear",
+      ok: displaySuspicionScore < 50,
+      icon: ShieldCheck,
+    },
+  ];
 
-  const { isListening, isSpeaking, isVoiceEnabled, currentTranscript, toggleVoice, startContinuous, stopContinuous, resetTranscript } =
-    useAzureSpeech(onFinalResult, toast);
+  const interviewTimeline = [
+    {
+      id: "intro",
+      label: "Intro",
+      hint: "Warm-up and context",
+      active: currentQuestionIndex === 0,
+      complete: currentQuestionIndex > 0,
+    },
+    {
+      id: "technical",
+      label: "Technical",
+      hint: "Role-specific depth",
+      active: currentQuestionMeta?.sectionId === "technical",
+      complete:
+        questionListState.some((question) => question.sectionId === "technical") &&
+        currentQuestionIndex >
+          questionListState.findLastIndex((question) => question.sectionId === "technical"),
+    },
+    {
+      id: "resume_projects",
+      label: "Resume Projects",
+      hint: "Project evidence",
+      active: currentQuestionMeta?.sectionId === "resume_projects",
+      complete:
+        questionListState.some((question) => question.sectionId === "resume_projects") &&
+        currentQuestionIndex >
+          questionListState.findLastIndex((question) => question.sectionId === "resume_projects"),
+    },
+    {
+      id: "behavioral",
+      label: "Behavioral",
+      hint: "Communication signals",
+      active: currentQuestionMeta?.sectionId === "communication" && currentQuestionIndex > 0,
+      complete:
+        questionListState.some((question) => question.sectionId === "communication") &&
+        currentQuestionIndex >
+          questionListState.findLastIndex((question) => question.sectionId === "communication"),
+    },
+    {
+      id: "aptitude",
+      label: "Aptitude",
+      hint: "Scenario judgment",
+      active: false,
+      complete: currentQuestionIndex + 1 >= totalQuestionCount,
+    },
+    {
+      id: "wrap",
+      label: "Wrap-up",
+      hint: "Submit and report",
+      active: currentQuestionIndex + 1 >= totalQuestionCount,
+      complete: false,
+    },
+  ];
+
+  const interviewerState = isCompletingInterview
+    ? "Submitting"
+    : isSpeaking
+      ? "Speaking"
+      : isRecordingControlled || isListening
+        ? "Listening"
+        : "Thinking";
+
+  const voiceStatusText = isCompletingInterview
+    ? "Processing final response..."
+    : isRecordingControlled
+      ? "Recording answer now"
+      : isListening
+        ? "Listening for speech"
+        : currentTranscript || draftResponse
+          ? "Transcript captured"
+          : "Ready for your response";
 
   const captureViolationEvidence = useCallback((video: HTMLVideoElement, timestamp: string) => {
     try {
@@ -494,6 +632,10 @@ export function InterviewView() {
     }
   }, [recordProctorViolation, runMediaPipeProctoring]);
 
+  useEffect(() => {
+    runProctoringRef.current = runProctoring;
+  }, [runProctoring]);
+
   const startFullInterviewRecording = useCallback((stream: MediaStream, id: string) => {
     if (fullInterviewRecorderRef.current?.state === "recording") return;
 
@@ -581,6 +723,11 @@ export function InterviewView() {
       console.warn("Recording upload finished with errors:", recordingUploadErrorRef.current);
     }
   }, [withTimeout]);
+
+  useEffect(() => {
+    startFullInterviewRecordingRef.current = startFullInterviewRecording;
+    stopFullInterviewRecordingRef.current = stopFullInterviewRecording;
+  }, [startFullInterviewRecording, stopFullInterviewRecording]);
 
   const scheduleBackgroundReportGeneration = useCallback((id: string) => {
     void fetch(`/api/interviews/${id}/generate-report`, {
@@ -681,7 +828,7 @@ export function InterviewView() {
         attachCameraStream(stream);
 
         if (id) {
-            startFullInterviewRecording(stream, id);
+            startFullInterviewRecordingRef.current(stream, id);
 
             // keep audio stream for controlled per-question recordings
             const tracks = stream.getAudioTracks();
@@ -692,17 +839,19 @@ export function InterviewView() {
             }
         }
 
-        proctoringIntervalRef.current = setInterval(runProctoring, 3000);
+        proctoringIntervalRef.current = setInterval(() => {
+          void runProctoringRef.current();
+        }, 3000);
 
         const onVisibility = () => {
-          addSecurityEvent(document.hidden ? "visibility_hidden" : "visibility_visible");
+          addSecurityEventRef.current(document.hidden ? "visibility_hidden" : "visibility_visible");
         };
-        const onBlur = () => addSecurityEvent("window_blur");
-        const onFocus = () => addSecurityEvent("window_focus");
-        const onCopy = () => addSecurityEvent("copy");
-        const onCut = () => addSecurityEvent("cut");
-        const onPaste = () => addSecurityEvent("paste");
-        const onContextMenu = () => addSecurityEvent("context_menu");
+        const onBlur = () => addSecurityEventRef.current("window_blur");
+        const onFocus = () => addSecurityEventRef.current("window_focus");
+        const onCopy = () => addSecurityEventRef.current("copy");
+        const onCut = () => addSecurityEventRef.current("cut");
+        const onPaste = () => addSecurityEventRef.current("paste");
+        const onContextMenu = () => addSecurityEventRef.current("context_menu");
 
         document.addEventListener("visibilitychange", onVisibility);
         window.addEventListener("blur", onBlur);
@@ -716,18 +865,18 @@ export function InterviewView() {
         devtoolsIntervalRef.current = setInterval(() => {
           const widthGap = Math.abs(window.outerWidth - window.innerWidth);
           const heightGap = Math.abs(window.outerHeight - window.innerHeight);
-          if (widthGap > 160 || heightGap > 160) addSecurityEvent("devtools_suspected", `gap:${widthGap}x${heightGap}`);
+          if (widthGap > 160 || heightGap > 160) addSecurityEventRef.current("devtools_suspected", `gap:${widthGap}x${heightGap}`);
 
           const screenGap = window.screen.width - window.outerWidth;
           if (screenGap > 420 && window.outerWidth < window.screen.width * 0.82) {
-            addSecurityEvent("multi_monitor_suspected", `screen:${window.screen.width},window:${window.outerWidth}`);
+            addSecurityEventRef.current("multi_monitor_suspected", `screen:${window.screen.width},window:${window.outerWidth}`);
           }
 
           const video = proctorVideoRef.current || videoRef.current;
           if (video && video.videoWidth > 0 && video.videoHeight > 0) {
             const aspect = video.videoWidth / video.videoHeight;
             if (aspect > 2.3 || aspect < 1.15) {
-              addSecurityEvent("screen_share_suspected", `aspect:${aspect.toFixed(2)}`);
+              addSecurityEventRef.current("screen_share_suspected", `aspect:${aspect.toFixed(2)}`);
             } else {
               const sampleCanvas = document.createElement("canvas");
               sampleCanvas.width = 160;
@@ -748,7 +897,7 @@ export function InterviewView() {
                   }
                 }
                 if (edgePixels > 0 && darkEdgePixels / edgePixels > 0.72) {
-                  addSecurityEvent("screen_share_suspected", "letterbox-bars");
+                  addSecurityEventRef.current("screen_share_suspected", "letterbox-bars");
                 }
               }
             }
@@ -799,11 +948,11 @@ export function InterviewView() {
         }
         mediaPipeFaceLandmarkerRef.current = null;
         mediaPipeInitPromiseRef.current = null;
-        void stopFullInterviewRecording();
+        void stopFullInterviewRecordingRef.current();
         cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
         cameraStreamRef.current = null;
     }
-  }, [toast, runProctoring, searchParams, startFullInterviewRecording, stopFullInterviewRecording]);
+  }, [attachCameraStream, searchParams, toast]);
 
   useEffect(() => {
     if (!hasAcceptedConsent || !cameraStream) return;
@@ -1139,6 +1288,26 @@ export function InterviewView() {
     }
   };
 
+  useEffect(() => {
+    if (!hasAcceptedConsent || isCompleted || isIdentityBlocking || isRecordingControlled) return;
+    if (!currentQuestion?.content || lastSpokenQuestionIdRef.current === currentQuestion.id) return;
+
+    lastSpokenQuestionIdRef.current = currentQuestion.id;
+    const timer = window.setTimeout(() => {
+      speak(currentQuestion.content);
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    currentQuestion?.content,
+    currentQuestion?.id,
+    hasAcceptedConsent,
+    isCompleted,
+    isIdentityBlocking,
+    isRecordingControlled,
+    speak,
+  ]);
+
   if (isLoading) {
     return (
       <div className="flex flex-col justify-center items-center h-full space-y-4">
@@ -1150,13 +1319,6 @@ export function InterviewView() {
       </div>
     );
   }
-
-  const currentQuestion = [...messages].reverse().find((message) => message.role === "ai");
-  const isMicActive = isRecordingControlled || isListening;
-  const allConsentsAccepted = Object.values(consents).every(Boolean);
-  const isIdentityBlocking =
-    Boolean(candidateId) && (identityStatus === "pending" || identityStatus === "verifying");
-  const finalReportMessage = FINAL_REPORT_MESSAGE;
 
   if (isCompleted) {
     return (
@@ -1171,26 +1333,52 @@ export function InterviewView() {
             </div>
           </div>
         )}
-        <div className="bg-white p-12 rounded-[3rem] shadow-2xl border flex flex-col items-center space-y-6">
-           <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-4">
-              <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M5 13l4 4L19 7"></path>
-              </svg>
+        <div className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white p-8 shadow-2xl md:p-10">
+           <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-50 text-emerald-600">
+              <CheckCircle className="h-9 w-9" />
            </div>
-           <h1 className="text-4xl font-black text-slate-900 tracking-tight">Interview Completed</h1>
-           <p className="text-lg text-slate-500 max-w-md leading-relaxed">
-             Thank you for your time. Your responses have been securely recorded and submitted for evaluation.
+           <p className="mt-5 text-xs font-black uppercase tracking-[0.22em] text-emerald-700">Interview Submitted</p>
+           <h1 className="mt-2 text-3xl font-black tracking-tight text-slate-900 md:text-4xl">Your interview is complete</h1>
+           <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500 md:text-base">
+             Your responses, recording, transcript, and integrity checks have been submitted for review.
            </p>
-           <p className="text-sm font-medium text-primary">{reportGenerationMessage || finalReportMessage}</p>
-           <div className="pt-8 w-full">
-              <Button 
-                size="lg" 
-                onClick={showCloseInstructions} 
-                className="w-full h-16 text-xl font-bold rounded-2xl shadow-xl bg-slate-900 hover:bg-slate-800 transition-all active:scale-95"
+
+           <div className="mt-7 grid gap-3 text-left md:grid-cols-3">
+             {[
+               { label: "Responses", value: "Submitted", icon: FileCheck2 },
+               { label: "Recording", value: recordingUploadErrorRef.current ? "Submitted with warning" : "Saved", icon: Radio },
+               { label: "Integrity", value: `${displaySuspicionScore}/100`, icon: ShieldCheck },
+             ].map((item) => {
+               const Icon = item.icon;
+               return (
+                 <div key={item.label} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                   <Icon className="h-5 w-5 text-[#056BFC]" />
+                   <p className="mt-3 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
+                   <p className="mt-1 text-sm font-bold text-slate-900">{item.value}</p>
+                 </div>
+               );
+             })}
+           </div>
+
+           <div className="mt-6 rounded-xl border border-blue-100 bg-blue-50 p-4 text-left">
+             <div className="flex items-center gap-3">
+               <Loader2 className="h-5 w-5 animate-spin text-[#056BFC]" />
+               <div>
+                 <p className="text-sm font-bold text-slate-900">Feedback report generation started</p>
+                 <p className="mt-1 text-xs leading-5 text-slate-600">{reportGenerationMessage || finalReportMessage}</p>
+               </div>
+             </div>
+           </div>
+
+           <div className="pt-7">
+              <Button
+                size="lg"
+                onClick={showCloseInstructions}
+                className="h-12 w-full rounded-xl bg-slate-900 text-base font-bold shadow-xl transition-all hover:bg-slate-800 active:scale-95"
               >
                 Close Interview
               </Button>
-              <p className="mt-4 text-xs text-slate-400 font-medium">Click Close Interview when you are ready to leave.</p>
+              <p className="mt-3 text-xs font-medium text-slate-400">You may close this tab after seeing the confirmation message.</p>
            </div>
         </div>
       </div>
@@ -1357,6 +1545,9 @@ export function InterviewView() {
           <div>
             <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-primary">Interview Session</p>
             <h1 className="mt-0.5 text-lg font-bold text-slate-900">{settings?.role || "Interview"}</h1>
+            <p className="mt-1 text-xs text-slate-500">
+              {currentSectionTitle} - question {currentQuestionIndex + 1} of {totalQuestionCount}
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -1376,10 +1567,67 @@ export function InterviewView() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(230px,290px)_minmax(0,1fr)]">
-          <aside className="min-h-0 lg:sticky lg:top-0 lg:self-start">
+        <div className="mb-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Live Interview Timeline</p>
+              <p className="mt-1 text-xs text-slate-500">Current section, elapsed progress, and upcoming interview stages.</p>
+            </div>
+            <div className="min-w-24 text-right">
+              <p className="font-mono text-sm font-black text-slate-900">{questionProgressPercent}%</p>
+              <p className="text-[10px] font-semibold text-slate-500">Complete</p>
+            </div>
+          </div>
+
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
+            <div className="h-full rounded-full bg-[#056BFC] transition-all" style={{ width: `${questionProgressPercent}%` }} />
+          </div>
+
+          <div className="mt-3 grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+            {interviewTimeline.map((step) => {
+              const tone = step.complete
+                ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+                : step.active
+                  ? "border-blue-200 bg-blue-50 text-[#056BFC] shadow-sm"
+                  : "border-slate-200 bg-slate-50 text-slate-500";
+              return (
+                <div key={step.id} className={`rounded-lg border px-3 py-2 transition-colors ${tone}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-black">{step.label}</span>
+                    {step.complete ? (
+                      <CheckCircle className="h-3.5 w-3.5" />
+                    ) : step.active ? (
+                      <Activity className="h-3.5 w-3.5 animate-pulse" />
+                    ) : (
+                      <Clock className="h-3.5 w-3.5" />
+                    )}
+                  </div>
+                  <p className="mt-1 truncate text-[10px] font-medium opacity-80">{step.hint}</p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-2">
+          <aside className="min-h-0">
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-              <div className="relative aspect-[4/3.95] bg-slate-100">
+              <div className="border-b border-slate-200 px-3.5 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <UserRound className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Candidate Video</p>
+                      <p className="text-xs font-semibold text-slate-700">Live proctored camera</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-red-600">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                    Live
+                  </div>
+                </div>
+              </div>
+              <div className="relative aspect-video bg-slate-100">
                 <video
                   ref={setCandidateVideoRef}
                   className="h-full w-full object-cover"
@@ -1397,11 +1645,6 @@ export function InterviewView() {
                   </div>
                 )}
 
-                <div className="absolute right-3 top-3 flex items-center gap-2 rounded-full border border-red-200 bg-white/90 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-red-600 shadow-sm">
-                  <span className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
-                  Live
-                </div>
-
                 <div className="absolute bottom-2.5 left-2.5 right-2.5 rounded-lg border border-slate-200 bg-white/90 p-2.5 shadow-sm backdrop-blur">
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -1418,7 +1661,65 @@ export function InterviewView() {
             </div>
           </aside>
 
-          <section className="flex min-h-0 flex-col gap-2">
+          <aside className="min-h-0">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              <div className="border-b border-slate-200 px-3.5 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <Bot className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">AI Interviewer</p>
+                      <p className="text-xs font-semibold text-slate-700">Aarav Mehta - Technical Panel</p>
+                    </div>
+                  </div>
+                  <div className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${
+                    isSpeaking || isCompletingInterview ? "border-blue-200 bg-blue-50 text-primary" : "border-slate-200 bg-slate-50 text-slate-500"
+                  }`}>
+                    <Radio className={`h-3.5 w-3.5 ${isSpeaking || isCompletingInterview ? "animate-pulse" : ""}`} />
+                    {interviewerState}
+                  </div>
+                </div>
+              </div>
+              <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-slate-100">
+                <div className="relative flex flex-col items-center">
+                  <div className={`relative flex h-32 w-32 items-center justify-center rounded-full border-4 bg-white shadow-xl transition-all ${
+                    isSpeaking || isCompletingInterview ? "border-primary shadow-blue-200" : "border-slate-200"
+                  }`}>
+                    <div className="absolute inset-3 rounded-full bg-gradient-to-b from-blue-50 to-slate-100" />
+                    <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-[#056BFC] text-white shadow-lg">
+                      <Bot className="h-10 w-10" />
+                    </div>
+                    {(isSpeaking || isCompletingInterview) && (
+                      <div className="absolute -inset-3 rounded-full border border-primary/30 animate-ping" />
+                    )}
+                  </div>
+                  <div className="mt-5 flex items-end gap-1.5">
+                    {[10, 18, 26, 16, 22].map((height, index) => (
+                      <span
+                        key={height}
+                        className={`w-1.5 rounded-full bg-primary/70 ${isSpeaking || isCompletingInterview ? "animate-pulse" : "opacity-30"}`}
+                        style={{ height: `${height}px`, animationDelay: `${index * 120}ms` }}
+                      />
+                    ))}
+                  </div>
+                  <p className="mt-4 max-w-sm px-6 text-center text-sm font-semibold leading-6 text-slate-700">
+                    {isSpeaking
+                      ? "Reading the question aloud..."
+                      : isCompletingInterview
+                        ? "Submitting your interview and starting report generation..."
+                        : isMicActive
+                          ? "Listening to your response..."
+                          : "Reviewing the current question."}
+                  </p>
+                  <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
+                    Voice: Indian English
+                  </p>
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <section className="flex min-h-0 flex-col gap-2 lg:col-span-2">
             <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -1443,42 +1744,8 @@ export function InterviewView() {
               </div>
             </div>
 
-            <div className="grid gap-2">
+            <div className="grid gap-2 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
               <div className="flex flex-col gap-2">
-                <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-                  <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Interview Sections</p>
-                  <div className="mt-2 space-y-2">
-                    {Object.entries(INTERVIEW_SECTION_TITLES).map(([sectionId, sectionTitle]) => {
-                      const completedCount = questionListState
-                        .slice(0, Math.max(0, currentQuestionIndex))
-                        .filter((question) => question.sectionId === sectionId).length;
-                      const totalCount = questionListState.filter((question) => question.sectionId === sectionId).length;
-                      if (totalCount === 0) return null;
-                      const isActiveSection = currentSectionTitle === sectionTitle;
-                      const isCompletedSection = totalCount > 0 && completedCount >= totalCount && !isActiveSection;
-                      const sectionTone = isCompletedSection
-                        ? "border-emerald-100 bg-emerald-50/70 text-emerald-700"
-                        : isActiveSection
-                          ? "border-blue-200 bg-blue-50 text-[#056BFC]"
-                          : "border-slate-200 bg-slate-50 text-slate-700";
-
-                      return (
-                        <div
-                          key={sectionId}
-                          className={`rounded-lg border px-3 py-2 text-xs transition-colors ${sectionTone}`}
-                        >
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="font-semibold">{sectionTitle}</span>
-                            <span className={`font-mono ${isCompletedSection ? "text-emerald-700" : isActiveSection ? "text-primary" : "text-slate-500"}`}>
-                              {Math.min(completedCount + (isActiveSection ? 1 : 0), totalCount)} / {totalCount}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-
                 <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Response Controls</p>
                   <div className="mt-2 grid grid-cols-3 gap-2">
@@ -1519,12 +1786,12 @@ export function InterviewView() {
                 >
                   <div className="flex items-center gap-3">
                     {isMicActive ? (
-                      <div className="flex gap-1">
-                        {[1, 2, 3, 4].map((i) => (
+                      <div className="flex items-end gap-1">
+                        {[10, 18, 14, 22, 16, 26, 12, 20].map((height, index) => (
                           <div
-                            key={i}
+                            key={`${height}-${index}`}
                             className="w-1 rounded-full bg-primary animate-pulse"
-                            style={{ height: `${Math.random() * 20 + 5}px`, animationDelay: `${i * 150}ms` }}
+                            style={{ height: `${height}px`, animationDelay: `${index * 150}ms` }}
                           />
                         ))}
                       </div>
@@ -1533,44 +1800,112 @@ export function InterviewView() {
                     )}
                     <div>
                       <p className={`text-[9px] font-bold uppercase tracking-[0.16em] ${isMicActive ? "text-primary" : "text-slate-500"}`}>
-                        {isMicActive ? "Live Audio Stream" : "Awaiting Input"}
+                        {isMicActive ? "Live Audio Stream" : "Voice Visualization"}
                       </p>
                       <p className="mt-1 text-[11px] text-slate-600">
-                        {isRecordingControlled ? "Recording answer now." : "Press record when you're ready to respond."}
+                        {voiceStatusText} - confidence {currentTranscript || draftResponse ? "captured" : "pending"}
                       </p>
                     </div>
                   </div>
                 </div>
 
-                <div className="rounded-[1.5rem] border border-slate-200 bg-white p-3.5 shadow-sm">
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Violation Monitor</p>
-                      <p className="text-[11px] text-slate-500">
-                        {violations.length} events · Suspicion {displaySuspicionScore}/100
-                      </p>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Real-Time Proctoring</p>
+                      <p className="text-[11px] text-slate-500">Camera, microphone, identity, and environment status.</p>
                     </div>
-                    <Button size="sm" variant="ghost" className="rounded-full" onClick={() => setShowViolationsPanel(v => !v)}>
-                      {showViolationsPanel ? "Hide" : "Details"}
-                    </Button>
+                    <div className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${
+                      displaySuspicionScore >= 50
+                        ? "bg-red-50 text-red-600"
+                        : displaySuspicionScore >= 20
+                          ? "bg-amber-50 text-amber-700"
+                          : "bg-emerald-50 text-emerald-700"
+                    }`}>
+                      {displaySuspicionScore}/100
+                    </div>
                   </div>
 
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    {proctorStatusItems.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                          <div className="flex items-center gap-2">
+                            <Icon className={`h-4 w-4 ${item.ok ? "text-emerald-600" : "text-red-500"}`} />
+                            <span className="text-[11px] font-bold text-slate-800">{item.label}</span>
+                          </div>
+                          <p className={`mt-1 text-[10px] font-semibold ${item.ok ? "text-emerald-700" : "text-red-600"}`}>
+                            {item.status}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="mt-3 rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle className={`h-4 w-4 ${violations.length ? "text-amber-600" : "text-emerald-600"}`} />
+                        <div>
+                          <p className="text-[11px] font-bold text-slate-900">{violations.length} proctoring alerts</p>
+                          <p className="text-[10px] text-slate-500">
+                            {visibleSecurityEvents.length ? `${visibleSecurityEvents.length} recent integrity signals` : "No recent integrity signals"}
+                          </p>
+                        </div>
+                      </div>
+                      <Button size="sm" variant="ghost" className="h-7 rounded-full px-2 text-[10px]" onClick={() => setShowViolationsPanel(v => !v)}>
+                        {showViolationsPanel ? "Hide" : "Details"}
+                      </Button>
+                    </div>
+
                   {showViolationsPanel && (
-                    <div className="mt-4 rounded-2xl border border-red-100 bg-red-50 p-3 text-xs">
-                      {violations.length === 0 ? (
-                        <div className="text-muted-foreground">No violations detected.</div>
+                    <div className="mt-3 space-y-2 text-xs">
+                      {violations.length === 0 && visibleSecurityEvents.length === 0 ? (
+                        <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-emerald-700">Environment checks are clear.</div>
                       ) : (
-                        <ul className="space-y-2">
-                          {violations.map((v, i) => (
-                            <li key={i} className="flex justify-between gap-3">
-                              <span className="font-mono text-slate-500">{v.timestamp}</span>
-                              <span className="text-right font-semibold text-red-600">{v.message}</span>
-                            </li>
+                        <>
+                          {violations.slice(-3).reverse().map((v, i) => (
+                            <div key={`${v.timestamp}-${i}`} className="rounded-lg border border-red-100 bg-red-50 p-2">
+                              <div className="flex justify-between gap-3">
+                                <span className="font-mono text-slate-500">{v.timestamp}</span>
+                                <span className="text-right font-semibold text-red-600">{v.message}</span>
+                              </div>
+                            </div>
                           ))}
-                        </ul>
+                          {visibleSecurityEvents.map((event, i) => (
+                            <div key={`${event.timestamp}-${event.type}-${i}`} className="rounded-lg border border-amber-100 bg-amber-50 p-2">
+                              <div className="flex justify-between gap-3">
+                                <span className="font-mono text-slate-500">{event.timestamp}</span>
+                                <span className="text-right font-semibold text-amber-700">{event.type.replaceAll("_", " ")}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </>
                       )}
                     </div>
                   )}
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Candidate Notes</p>
+                      <p className="text-[11px] text-slate-500">Private scratchpad for structuring your answer.</p>
+                    </div>
+                    <NotebookPen className="h-4 w-4 text-slate-400" />
+                  </div>
+                  <textarea
+                    value={candidateNotes}
+                    onChange={(event) => setCandidateNotes(event.target.value)}
+                    placeholder="Jot down STAR points, examples, metrics, or tradeoffs..."
+                    className="mt-3 min-h-28 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-800 outline-none transition focus:border-[#056BFC] focus:bg-white focus:ring-2 focus:ring-blue-100"
+                  />
+                  <p className="mt-1.5 text-[10px] text-slate-400">Notes stay local in this browser session and are not added to your submitted answer.</p>
                 </div>
               </div>
             </div>
