@@ -39,6 +39,13 @@ import { getSecurityEventWeight } from "@/lib/suspicion-scoring";
 import { useAzureSpeech } from "@/hooks/use-azure-speech";
 import { useToast } from "@/hooks/use-toast";
 import organizationLogo from "@/assets/VMLogoWhite.png";
+import aaravTalkingVideo from "@/assets/interviewers/aarav.mp4";
+import aaravAvatar from "@/assets/interviewers/aarav.png";
+import meeraTalkingVideo from "@/assets/interviewers/meera.mp4";
+import meeraAvatar from "@/assets/interviewers/meera.png";
+import priyaTalkingVideo from "@/assets/interviewers/priya.mp4";
+import priyaAvatar from "@/assets/interviewers/priya.png";
+import rahulAvatar from "@/assets/interviewers/rahul.png";
 
 const FINAL_REPORT_MESSAGE =
   "Your feedback report is being generated in the background. VM TAG Team will reach out to you shortly!";
@@ -116,6 +123,48 @@ export function InterviewView() {
     phone_detected: 20,
   };
   const MEDIAPIPE_PROCTOR_STRIKES_REQUIRED = 3;
+  const interviewerProfiles = [
+    {
+      id: "aarav",
+      name: "Aarav Mehta",
+      title: "Technical Interview Panel",
+      avatar: aaravAvatar,
+      video: aaravTalkingVideo,
+      accent: "from-slate-900 via-[#0f2147] to-[#056BFC]",
+    },
+    {
+      id: "meera",
+      name: "Meera Iyer",
+      title: "Behavioral Interview Panel",
+      avatar: meeraAvatar,
+      video: meeraTalkingVideo,
+      accent: "from-slate-900 via-[#10253f] to-[#2f6ff7]",
+    },
+    {
+      id: "priya",
+      name: "Priya Nair",
+      title: "HR Interview Panel",
+      avatar: priyaAvatar,
+      video: priyaTalkingVideo,
+      accent: "from-slate-900 via-[#1c2536] to-[#1f8bd6]",
+    },
+    {
+      id: "rahul",
+      name: "Rahul Verma",
+      title: "Assessment Panel",
+      avatar: rahulAvatar,
+      video: null,
+      accent: "from-slate-900 via-[#12233b] to-[#8a5cff]",
+    },
+  ];
+  const interviewerKey = (settings?.role || "interview").toLowerCase();
+  const activeInterviewer =
+    interviewerProfiles.find((profile) => interviewerKey.includes(profile.id)) ||
+    interviewerProfiles[
+      Math.abs(
+        Array.from(interviewerKey).reduce((acc, char) => acc + char.charCodeAt(0), 0)
+      ) % interviewerProfiles.length
+    ];
   const timerRef = useRef<number | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const autoCloseTimeoutRef = useRef<number | null>(null);
@@ -1295,7 +1344,7 @@ export function InterviewView() {
     lastSpokenQuestionIdRef.current = currentQuestion.id;
     const timer = window.setTimeout(() => {
       speak(currentQuestion.content);
-    }, 350);
+    }, currentQuestionIndex === 0 ? 900 : 350);
 
     return () => window.clearTimeout(timer);
   }, [
@@ -1451,7 +1500,10 @@ export function InterviewView() {
           <Button
             className="mt-6 h-11 w-full rounded-lg bg-[#056BFC] text-base font-bold hover:bg-[#024099]"
             disabled={!allConsentsAccepted}
-            onClick={() => setHasAcceptedConsent(true)}
+            onClick={() => {
+              lastSpokenQuestionIdRef.current = null;
+              setHasAcceptedConsent(true);
+            }}
           >
             Start Test
           </Button>
@@ -1567,49 +1619,7 @@ export function InterviewView() {
           </div>
         </div>
 
-        <div className="mb-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Live Interview Timeline</p>
-              <p className="mt-1 text-xs text-slate-500">Current section, elapsed progress, and upcoming interview stages.</p>
-            </div>
-            <div className="min-w-24 text-right">
-              <p className="font-mono text-sm font-black text-slate-900">{questionProgressPercent}%</p>
-              <p className="text-[10px] font-semibold text-slate-500">Complete</p>
-            </div>
-          </div>
-
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
-            <div className="h-full rounded-full bg-[#056BFC] transition-all" style={{ width: `${questionProgressPercent}%` }} />
-          </div>
-
-          <div className="mt-3 grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
-            {interviewTimeline.map((step) => {
-              const tone = step.complete
-                ? "border-emerald-100 bg-emerald-50 text-emerald-700"
-                : step.active
-                  ? "border-blue-200 bg-blue-50 text-[#056BFC] shadow-sm"
-                  : "border-slate-200 bg-slate-50 text-slate-500";
-              return (
-                <div key={step.id} className={`rounded-lg border px-3 py-2 transition-colors ${tone}`}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-black">{step.label}</span>
-                    {step.complete ? (
-                      <CheckCircle className="h-3.5 w-3.5" />
-                    ) : step.active ? (
-                      <Activity className="h-3.5 w-3.5 animate-pulse" />
-                    ) : (
-                      <Clock className="h-3.5 w-3.5" />
-                    )}
-                  </div>
-                  <p className="mt-1 truncate text-[10px] font-medium opacity-80">{step.hint}</p>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-2">
+        <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(230px,0.85fr)_minmax(260px,0.9fr)_minmax(360px,1.15fr)]">
           <aside className="min-h-0">
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="border-b border-slate-200 px-3.5 py-2.5">
@@ -1664,33 +1674,49 @@ export function InterviewView() {
           <aside className="min-h-0">
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="border-b border-slate-200 px-3.5 py-2.5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <Bot className="h-4 w-4 text-primary" />
-                    <div>
-                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">AI Interviewer</p>
-                      <p className="text-xs font-semibold text-slate-700">Aarav Mehta - Technical Panel</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Bot className="h-4 w-4 text-primary" />
+                      <div>
+                        <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">AI Interviewer</p>
+                        <p className="text-xs font-semibold text-slate-700">{activeInterviewer.name} - {activeInterviewer.title}</p>
+                      </div>
                     </div>
-                  </div>
-                  <div className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${
-                    isSpeaking || isCompletingInterview ? "border-blue-200 bg-blue-50 text-primary" : "border-slate-200 bg-slate-50 text-slate-500"
-                  }`}>
-                    <Radio className={`h-3.5 w-3.5 ${isSpeaking || isCompletingInterview ? "animate-pulse" : ""}`} />
+                    <div className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${
+                      isSpeaking || isCompletingInterview ? "border-blue-200 bg-blue-50 text-primary" : "border-slate-200 bg-slate-50 text-slate-500"
+                    }`}>
+                      <Radio className={`h-3.5 w-3.5 ${isSpeaking || isCompletingInterview ? "animate-pulse" : ""}`} />
                     {interviewerState}
+                    </div>
                   </div>
                 </div>
-              </div>
               <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-slate-100">
-                <div className="relative flex flex-col items-center">
-                  <div className={`relative flex h-32 w-32 items-center justify-center rounded-full border-4 bg-white shadow-xl transition-all ${
+                <div className={`absolute inset-0 bg-gradient-to-br ${activeInterviewer.accent} opacity-10`} />
+                <div className="relative flex h-full w-full flex-col items-center justify-center">
+                  <div className={`relative h-32 w-32 overflow-hidden rounded-full border-4 bg-white shadow-xl transition-all md:h-40 md:w-40 ${
                     isSpeaking || isCompletingInterview ? "border-primary shadow-blue-200" : "border-slate-200"
                   }`}>
-                    <div className="absolute inset-3 rounded-full bg-gradient-to-b from-blue-50 to-slate-100" />
-                    <div className="relative flex h-20 w-20 items-center justify-center rounded-full bg-[#056BFC] text-white shadow-lg">
-                      <Bot className="h-10 w-10" />
-                    </div>
+                    {activeInterviewer.video && (isSpeaking || isCompletingInterview) ? (
+                      <video
+                        key={activeInterviewer.id}
+                        src={activeInterviewer.video}
+                        autoPlay
+                        loop
+                        muted
+                        playsInline
+                        preload="auto"
+                        className={`h-full w-full object-cover ${isSpeaking || isCompletingInterview ? "scale-[1.01]" : ""}`}
+                      />
+                    ) : (
+                      <Image
+                        src={activeInterviewer.avatar}
+                        alt={`${activeInterviewer.name} interviewer avatar`}
+                        className="h-full w-full object-cover"
+                        priority
+                      />
+                    )}
                     {(isSpeaking || isCompletingInterview) && (
-                      <div className="absolute -inset-3 rounded-full border border-primary/30 animate-ping" />
+                      <div className="absolute inset-0 rounded-full ring-4 ring-primary/25" />
                     )}
                   </div>
                   <div className="mt-5 flex items-end gap-1.5">
@@ -1704,7 +1730,7 @@ export function InterviewView() {
                   </div>
                   <p className="mt-4 max-w-sm px-6 text-center text-sm font-semibold leading-6 text-slate-700">
                     {isSpeaking
-                      ? "Reading the question aloud..."
+                      ? `${activeInterviewer.name} is asking the question...`
                       : isCompletingInterview
                         ? "Submitting your interview and starting report generation..."
                         : isMicActive
@@ -1719,7 +1745,7 @@ export function InterviewView() {
             </div>
           </aside>
 
-          <section className="flex min-h-0 flex-col gap-2 lg:col-span-2">
+          <section className="flex min-h-0 flex-col gap-2">
             <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -1744,7 +1770,7 @@ export function InterviewView() {
               </div>
             </div>
 
-            <div className="grid gap-2 lg:grid-cols-[minmax(0,1.15fr)_minmax(320px,0.85fr)]">
+            <div className="grid gap-2">
               <div className="flex flex-col gap-2">
                 <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                   <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Response Controls</p>
@@ -1811,7 +1837,7 @@ export function InterviewView() {
 
               </div>
 
-              <div className="flex flex-col gap-2">
+              <div className="hidden flex-col gap-2">
                 <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -1910,6 +1936,103 @@ export function InterviewView() {
               </div>
             </div>
           </section>
+        </div>
+
+        <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.85fr)]">
+          <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Live Interview Timeline</p>
+                <p className="mt-1 text-xs text-slate-500">Supporting progress tracker. The active interview controls stay above.</p>
+              </div>
+              <div className="min-w-24 text-right">
+                <p className="font-mono text-sm font-black text-slate-900">{questionProgressPercent}%</p>
+                <p className="text-[10px] font-semibold text-slate-500">Complete</p>
+              </div>
+            </div>
+
+            <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-100">
+              <div className="h-full rounded-full bg-[#056BFC] transition-all" style={{ width: `${questionProgressPercent}%` }} />
+            </div>
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-3 xl:grid-cols-6">
+              {interviewTimeline.map((step) => {
+                const tone = step.complete
+                  ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+                  : step.active
+                    ? "border-blue-200 bg-blue-50 text-[#056BFC] shadow-sm"
+                    : "border-slate-200 bg-slate-50 text-slate-500";
+                return (
+                  <div key={step.id} className={`rounded-lg border px-3 py-2 transition-colors ${tone}`}>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-black">{step.label}</span>
+                      {step.complete ? (
+                        <CheckCircle className="h-3.5 w-3.5" />
+                      ) : step.active ? (
+                        <Activity className="h-3.5 w-3.5 animate-pulse" />
+                      ) : (
+                        <Clock className="h-3.5 w-3.5" />
+                      )}
+                    </div>
+                    <p className="mt-1 truncate text-[10px] font-medium opacity-80">{step.hint}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Proctoring Status</p>
+                  <p className="text-[11px] text-slate-500">Integrity details are below the main interview workspace.</p>
+                </div>
+                <div className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${
+                  displaySuspicionScore >= 50
+                    ? "bg-red-50 text-red-600"
+                    : displaySuspicionScore >= 20
+                      ? "bg-amber-50 text-amber-700"
+                      : "bg-emerald-50 text-emerald-700"
+                }`}>
+                  {displaySuspicionScore}/100
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                {proctorStatusItems.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <div key={item.label} className="rounded-lg border border-slate-200 bg-slate-50 p-2.5">
+                      <div className="flex items-center gap-2">
+                        <Icon className={`h-4 w-4 ${item.ok ? "text-emerald-600" : "text-red-500"}`} />
+                        <span className="text-[11px] font-bold text-slate-800">{item.label}</span>
+                      </div>
+                      <p className={`mt-1 text-[10px] font-semibold ${item.ok ? "text-emerald-700" : "text-red-600"}`}>
+                        {item.status}
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">Candidate Notes</p>
+                  <p className="text-[11px] text-slate-500">Private scratchpad for structuring your answer.</p>
+                </div>
+                <NotebookPen className="h-4 w-4 text-slate-400" />
+              </div>
+              <textarea
+                value={candidateNotes}
+                onChange={(event) => setCandidateNotes(event.target.value)}
+                placeholder="Jot down STAR points, examples, metrics, or tradeoffs..."
+                className="mt-3 min-h-28 w-full resize-none rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-800 outline-none transition focus:border-[#056BFC] focus:bg-white focus:ring-2 focus:ring-blue-100"
+              />
+              <p className="mt-1.5 text-[10px] text-slate-400">Notes stay local in this browser session and are not added to your submitted answer.</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
