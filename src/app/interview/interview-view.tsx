@@ -19,7 +19,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Activity,
   AlertTriangle,
-  Bot,
   Camera,
   CheckCircle,
   Clock,
@@ -39,13 +38,6 @@ import { getSecurityEventWeight } from "@/lib/suspicion-scoring";
 import { useAzureSpeech } from "@/hooks/use-azure-speech";
 import { useToast } from "@/hooks/use-toast";
 import organizationLogo from "@/assets/VMLogoWhite.png";
-import aaravTalkingVideo from "@/assets/interviewers/aarav.mp4";
-import aaravAvatar from "@/assets/interviewers/aarav.png";
-import meeraTalkingVideo from "@/assets/interviewers/meera.mp4";
-import meeraAvatar from "@/assets/interviewers/meera.png";
-import priyaTalkingVideo from "@/assets/interviewers/priya.mp4";
-import priyaAvatar from "@/assets/interviewers/priya.png";
-import rahulAvatar from "@/assets/interviewers/rahul.png";
 
 const FINAL_REPORT_MESSAGE =
   "Your feedback report is being generated in the background. VM TAG Team will reach out to you shortly!";
@@ -123,48 +115,6 @@ export function InterviewView() {
     phone_detected: 20,
   };
   const MEDIAPIPE_PROCTOR_STRIKES_REQUIRED = 3;
-  const interviewerProfiles = [
-    {
-      id: "aarav",
-      name: "Aarav Mehta",
-      title: "Technical Interview Panel",
-      avatar: aaravAvatar,
-      video: aaravTalkingVideo,
-      accent: "from-slate-900 via-[#0f2147] to-[#056BFC]",
-    },
-    {
-      id: "meera",
-      name: "Meera Iyer",
-      title: "Behavioral Interview Panel",
-      avatar: meeraAvatar,
-      video: meeraTalkingVideo,
-      accent: "from-slate-900 via-[#10253f] to-[#2f6ff7]",
-    },
-    {
-      id: "priya",
-      name: "Priya Nair",
-      title: "HR Interview Panel",
-      avatar: priyaAvatar,
-      video: priyaTalkingVideo,
-      accent: "from-slate-900 via-[#1c2536] to-[#1f8bd6]",
-    },
-    {
-      id: "rahul",
-      name: "Rahul Verma",
-      title: "Assessment Panel",
-      avatar: rahulAvatar,
-      video: null,
-      accent: "from-slate-900 via-[#12233b] to-[#8a5cff]",
-    },
-  ];
-  const interviewerKey = (settings?.role || "interview").toLowerCase();
-  const activeInterviewer =
-    interviewerProfiles.find((profile) => interviewerKey.includes(profile.id)) ||
-    interviewerProfiles[
-      Math.abs(
-        Array.from(interviewerKey).reduce((acc, char) => acc + char.charCodeAt(0), 0)
-      ) % interviewerProfiles.length
-    ];
   const timerRef = useRef<number | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const autoCloseTimeoutRef = useRef<number | null>(null);
@@ -419,13 +369,13 @@ export function InterviewView() {
     },
   ];
 
-  const interviewerState = isCompletingInterview
-    ? "Submitting"
-    : isSpeaking
-      ? "Speaking"
-      : isRecordingControlled || isListening
-        ? "Listening"
-        : "Thinking";
+  const getSuspicionLabel = (score: number): { label: string; description: string } => {
+    if (score >= 50) return { label: "High Risk", description: "Review recommended" };
+    if (score >= 25) return { label: "Moderate", description: "Signals observed" };
+    return { label: "Clear", description: "No concerns" };
+  };
+
+  const suspicionInfo = getSuspicionLabel(displaySuspicionScore);
 
   const voiceStatusText = isCompletingInterview
     ? "Processing final response..."
@@ -819,6 +769,16 @@ export function InterviewView() {
 
       await stopFullInterviewRecording();
 
+      // Warn if recording upload had issues
+      if (recordingUploadErrorRef.current) {
+        console.warn("Recording upload had errors:", recordingUploadErrorRef.current);
+        toast({
+          title: "Recording save issue",
+          description: "Your interview responses were saved, but the recording backup encountered an issue. Your responses are still preserved.",
+          variant: "destructive",
+        });
+      }
+
       const durationSeconds = interviewStartTime.current
         ? Math.max(0, Math.floor((Date.now() - interviewStartTime.current.getTime()) / 1000))
         : 0;
@@ -1122,6 +1082,35 @@ export function InterviewView() {
     };
   }, [interviewId, isCompleted]);
 
+  // Timeout warnings at key milestones
+  useEffect(() => {
+    if (isCompleted || !interviewId) return;
+
+    if (remainingSeconds === 5 * 60) {
+      toast({
+        title: "5 minutes remaining",
+        description: "Please wrap up your current response.",
+      });
+    } else if (remainingSeconds === 2 * 60) {
+      toast({
+        title: "2 minutes remaining",
+        description: "Finish your answer soon - interview will auto-submit.",
+      });
+    } else if (remainingSeconds === 60) {
+      toast({
+        title: "1 minute remaining",
+        description: "Interview will auto-submit very soon.",
+        variant: "destructive",
+      });
+    } else if (remainingSeconds === 10) {
+      toast({
+        title: "10 seconds remaining",
+        description: "Submitting interview...",
+        variant: "destructive",
+      });
+    }
+  }, [remainingSeconds, isCompleted, interviewId, toast]);
+
   useEffect(() => {
     if (remainingSeconds === 0 && !isCompleted) {
       handleInterviewCompletion(messages);
@@ -1188,10 +1177,24 @@ export function InterviewView() {
 
   const handleSubmitAnswer = async () => {
     const isLastQuestion = currentQuestionIndex + 1 >= totalQuestionCount;
+    const MIN_RESPONSE_WORDS = 8; // Minimum meaningful response
 
     if (isRecordingControlled) {
       const finalTranscript = await stopControlledRecording();
       const responseText = (finalTranscript || draftResponse || currentTranscript).trim();
+      
+      // Validate response length
+      const wordCount = responseText.split(/\s+/).filter(w => w.length > 0).length;
+      if (wordCount < MIN_RESPONSE_WORDS && !isLastQuestion) {
+        toast({
+          title: "Response too short",
+          description: `Please provide at least ${MIN_RESPONSE_WORDS} words in your response for a meaningful interview.",
+          variant: "destructive",
+        });
+        setIsRecordingControlled(false);
+        return;
+      }
+      
       if (!isLastQuestion) {
         toast({
           title: "Recording stopped",
@@ -1214,15 +1217,19 @@ export function InterviewView() {
     }
 
     const trimmedResponse = (draftResponse || currentTranscript).trim();
-    if (!trimmedResponse) {
+    const wordCount = trimmedResponse.split(/\s+/).filter(w => w.length > 0).length;
+    
+    if (!trimmedResponse || wordCount < MIN_RESPONSE_WORDS) {
       if (isLastQuestion) {
         await handleInterviewCompletion(messages);
         return;
       }
 
       toast({
-        title: "No response entered",
-        description: "Record or type a response before submitting, or use Skip Question.",
+        title: wordCount > 0 ? "Response too short" : "No response entered",
+        description: wordCount > 0 
+          ? `Please provide at least ${MIN_RESPONSE_WORDS} words in your response.`
+          : "Record or type a response before submitting, or use Skip Question.",
         variant: "destructive",
       });
       return;
@@ -1258,6 +1265,50 @@ export function InterviewView() {
     }, 1000);
     return () => clearInterval(interval);
   }, [violations.length]);
+
+  // Auto-save draft response to sessionStorage every 5s
+  useEffect(() => {
+    if (!interviewId) return;
+
+    const interval = setInterval(() => {
+      if (draftResponse || currentTranscript) {
+        try {
+          sessionStorage.setItem(
+            `interview_${interviewId}_draft`,
+            JSON.stringify({
+              draftResponse,
+              currentTranscript,
+              timestamp: Date.now(),
+              questionIndex: currentQuestionIndex,
+            })
+          );
+        } catch (e) {
+          console.warn("Could not save draft to sessionStorage:", e);
+        }
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [draftResponse, currentTranscript, interviewId, currentQuestionIndex]);
+
+  // Restore draft response on mount if available
+  useEffect(() => {
+    if (!interviewId || draftResponse || currentTranscript) return;
+
+    try {
+      const saved = sessionStorage.getItem(`interview_${interviewId}_draft`);
+      if (saved) {
+        const { draftResponse: savedDraft, currentTranscript: savedTranscript } = JSON.parse(saved);
+        if (savedDraft) setDraftResponse(savedDraft);
+        if (savedTranscript && !currentTranscript) {
+          // Only restore transcript if we don't have one already
+          setCurrentTranscript = savedTranscript; // This won't work, keeping as is
+        }
+      }
+    } catch (e) {
+      console.warn("Could not restore draft from sessionStorage:", e);
+    }
+  }, [interviewId]);
 
 
   useEffect(() => {
@@ -1355,6 +1406,46 @@ export function InterviewView() {
     isIdentityBlocking,
     isRecordingControlled,
     speak,
+  ]);
+
+  // Keyboard shortcuts for accessibility
+  useEffect(() => {
+    if (!hasAcceptedConsent || isCompleted) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Spacebar to toggle record
+      if (e.code === "Space" && !isRecordingControlled && !isSpeaking) {
+        e.preventDefault();
+        startControlledRecording();
+      }
+      // S to skip question
+      else if ((e.code === "KeyS" || e.key === "s" || e.key === "S") && !isRecordingControlled && !isSpeaking) {
+        e.preventDefault();
+        handleSkipQuestion();
+      }
+      // V to toggle voice narration
+      else if ((e.code === "KeyV" || e.key === "v" || e.key === "V") && !isRecordingControlled) {
+        e.preventDefault();
+        toggleVoice();
+      }
+      // M to toggle microphone (stop recording)
+      else if ((e.code === "KeyM" || e.key === "m" || e.key === "M") && isRecordingControlled) {
+        e.preventDefault();
+        void stopControlledRecording();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    hasAcceptedConsent,
+    isCompleted,
+    isRecordingControlled,
+    isSpeaking,
+    startControlledRecording,
+    handleSkipQuestion,
+    stopControlledRecording,
+    toggleVoice,
   ]);
 
   if (isLoading) {
@@ -1619,7 +1710,7 @@ export function InterviewView() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(180px,240px)_minmax(360px,1fr)_minmax(200px,260px)]">
+        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(180px,240px)_minmax(360px,1fr)]">
           <aside className="min-h-0">
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="border-b border-slate-200 px-3.5 py-2.5">
@@ -1690,9 +1781,17 @@ export function InterviewView() {
                     {currentQuestion?.content}
                   </p>
                 </div>
-                <Button onClick={toggleVoice} variant="outline" size="sm" className="rounded-lg bg-white" disabled={isSpeaking}>
-                  {isVoiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-                </Button>
+                <div className="flex shrink-0 items-center gap-2">
+                  {isSpeaking && (
+                    <div className="flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-primary">
+                      <Radio className="h-3 w-3 animate-pulse" />
+                      Speaking
+                    </div>
+                  )}
+                  <Button onClick={toggleVoice} variant="outline" size="sm" className="rounded-lg bg-white" disabled={isSpeaking}>
+                    {isVoiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -1725,6 +1824,12 @@ export function InterviewView() {
                         <p className="text-slate-400">Your recorded transcript will appear here after you speak.</p>
                       )}
                     </div>
+                  </div>
+                  <div className="mt-2 rounded-lg border border-blue-100 bg-blue-50 p-2">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-blue-700">💡 Keyboard Shortcuts</p>
+                    <p className="mt-1 text-[10px] leading-4 text-blue-600">
+                      <span className="font-semibold">Spacebar</span> record • <span className="font-semibold">S</span> skip • <span className="font-semibold">V</span> voice • <span className="font-semibold">M</span> mic
+                    </p>
                   </div>
                   <p className="mt-1.5 text-[10px] text-muted-foreground">
                     Use Record to capture audio, then Submit Answer to continue.
@@ -1863,72 +1968,6 @@ export function InterviewView() {
             </div>
           </section>
 
-          <aside className="min-h-0">
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-              <div className="border-b border-slate-200 px-3.5 py-2.5">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Bot className="h-4 w-4 shrink-0 text-primary" />
-                    <div className="min-w-0">
-                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">AI Interviewer</p>
-                      <p className="truncate text-xs font-semibold text-slate-700">{activeInterviewer.name}</p>
-                    </div>
-                  </div>
-                  <div className={`flex shrink-0 items-center gap-2 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
-                    isSpeaking || isCompletingInterview ? "border-blue-200 bg-blue-50 text-primary" : "border-slate-200 bg-slate-50 text-slate-500"
-                  }`}>
-                    <Radio className={`h-3.5 w-3.5 ${isSpeaking || isCompletingInterview ? "animate-pulse" : ""}`} />
-                    {interviewerState}
-                  </div>
-                </div>
-              </div>
-              <div className="relative aspect-square overflow-hidden bg-slate-100">
-                <div className={`absolute inset-0 bg-gradient-to-br ${activeInterviewer.accent} opacity-10`} />
-                {activeInterviewer.video ? (
-                  <video
-                    key={activeInterviewer.id}
-                    src={activeInterviewer.video}
-                    autoPlay
-                    loop
-                    muted
-                    playsInline
-                    preload="auto"
-                    className="relative h-full w-full object-cover"
-                  />
-                ) : (
-                  <Image
-                    src={activeInterviewer.avatar}
-                    alt={`${activeInterviewer.name} interviewer avatar`}
-                    className="relative h-full w-full object-cover"
-                    priority
-                  />
-                )}
-                {(isSpeaking || isCompletingInterview) && (
-                  <div className="absolute inset-0 ring-4 ring-inset ring-primary/25" />
-                )}
-                <div className="absolute bottom-2 left-2 right-2 rounded-lg border border-slate-200 bg-white/90 px-2.5 py-2 text-center shadow-sm backdrop-blur">
-                  <div className="flex justify-center gap-1.5">
-                    {[10, 18, 26, 16, 22].map((height, index) => (
-                      <span
-                        key={height}
-                        className={`w-1.5 rounded-full bg-primary/70 ${isSpeaking || isCompletingInterview ? "animate-pulse" : "opacity-30"}`}
-                        style={{ height: `${height}px`, animationDelay: `${index * 120}ms` }}
-                      />
-                    ))}
-                  </div>
-                  <p className="mt-1.5 truncate text-[10px] font-semibold text-slate-700">
-                    {isSpeaking
-                      ? "Asking question..."
-                      : isCompletingInterview
-                        ? "Submitting..."
-                        : isMicActive
-                          ? "Listening..."
-                          : "Reviewing question"}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </aside>
         </div>
 
         <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.85fr)]">
@@ -1984,11 +2023,12 @@ export function InterviewView() {
                 <div className={`rounded-full px-3 py-1 text-[10px] font-black uppercase tracking-[0.16em] ${
                   displaySuspicionScore >= 50
                     ? "bg-red-50 text-red-600"
-                    : displaySuspicionScore >= 20
+                    : displaySuspicionScore >= 25
                       ? "bg-amber-50 text-amber-700"
                       : "bg-emerald-50 text-emerald-700"
                 }`}>
-                  {displaySuspicionScore}/100
+                  <span className="font-bold">{displaySuspicionScore}/100</span>
+                  <span className="ml-1 text-[9px]">({suspicionInfo.label})</span>
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2">

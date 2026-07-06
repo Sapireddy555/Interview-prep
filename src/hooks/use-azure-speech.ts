@@ -177,8 +177,10 @@ export const useAzureSpeech = (
     utterance.onstart = () => setIsSpeaking(true);
     utterance.onend = () => {
         setIsSpeaking(false);
-        // Resume listening after AI finishes
-        setTimeout(startContinuous, 500);
+        // Resume listening after AI finishes only if voice is enabled
+        if (isVoiceEnabled) {
+          setTimeout(startContinuous, 800); // Increased delay to prevent conflicts
+        }
     };
     
     window.speechSynthesis.speak(utterance);
