@@ -1188,7 +1188,7 @@ export function InterviewView() {
       if (wordCount < MIN_RESPONSE_WORDS && !isLastQuestion) {
         toast({
           title: "Response too short",
-          description: `Please provide at least ${MIN_RESPONSE_WORDS} words in your response for a meaningful interview.",
+          description: `Please provide at least ${MIN_RESPONSE_WORDS} words in your response for a meaningful interview.`,
           variant: "destructive",
         });
         setIsRecordingControlled(false);
