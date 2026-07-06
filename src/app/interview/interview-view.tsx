@@ -1619,7 +1619,7 @@ export function InterviewView() {
           </div>
         </div>
 
-        <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(230px,0.85fr)_minmax(260px,0.9fr)_minmax(360px,1.15fr)]">
+        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-[minmax(180px,240px)_minmax(360px,1fr)_minmax(200px,260px)]">
           <aside className="min-h-0">
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
               <div className="border-b border-slate-200 px-3.5 py-2.5">
@@ -1637,7 +1637,7 @@ export function InterviewView() {
                   </div>
                 </div>
               </div>
-              <div className="relative aspect-video bg-slate-100">
+              <div className="relative aspect-square bg-slate-100">
                 <video
                   ref={setCandidateVideoRef}
                   className="h-full w-full object-cover"
@@ -1655,11 +1655,11 @@ export function InterviewView() {
                   </div>
                 )}
 
-                <div className="absolute bottom-2.5 left-2.5 right-2.5 rounded-lg border border-slate-200 bg-white/90 p-2.5 shadow-sm backdrop-blur">
+                <div className="absolute bottom-2 left-2 right-2 rounded-lg border border-slate-200 bg-white/90 p-2 shadow-sm backdrop-blur">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-slate-500">Recording Status</p>
-                      <p className="mt-1 text-[11px] font-semibold text-slate-900">
+                      <p className="mt-1 text-[10px] font-semibold text-slate-900">
                         {isRecordingControlled ? "Answer recording in progress" : "Ready for next response"}
                       </p>
                     </div>
@@ -1668,80 +1668,6 @@ export function InterviewView() {
                 </div>
               </div>
 
-            </div>
-          </aside>
-
-          <aside className="min-h-0">
-            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-              <div className="border-b border-slate-200 px-3.5 py-2.5">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-2">
-                      <Bot className="h-4 w-4 text-primary" />
-                      <div>
-                        <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">AI Interviewer</p>
-                        <p className="text-xs font-semibold text-slate-700">{activeInterviewer.name} - {activeInterviewer.title}</p>
-                      </div>
-                    </div>
-                    <div className={`flex items-center gap-2 rounded-full border px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.16em] ${
-                      isSpeaking || isCompletingInterview ? "border-blue-200 bg-blue-50 text-primary" : "border-slate-200 bg-slate-50 text-slate-500"
-                    }`}>
-                      <Radio className={`h-3.5 w-3.5 ${isSpeaking || isCompletingInterview ? "animate-pulse" : ""}`} />
-                    {interviewerState}
-                    </div>
-                  </div>
-                </div>
-              <div className="relative flex aspect-video items-center justify-center overflow-hidden bg-slate-100">
-                <div className={`absolute inset-0 bg-gradient-to-br ${activeInterviewer.accent} opacity-10`} />
-                <div className="relative flex h-full w-full flex-col items-center justify-center">
-                  <div className={`relative h-32 w-32 overflow-hidden rounded-full border-4 bg-white shadow-xl transition-all md:h-40 md:w-40 ${
-                    isSpeaking || isCompletingInterview ? "border-primary shadow-blue-200" : "border-slate-200"
-                  }`}>
-                    {activeInterviewer.video && (isSpeaking || isCompletingInterview) ? (
-                      <video
-                        key={activeInterviewer.id}
-                        src={activeInterviewer.video}
-                        autoPlay
-                        loop
-                        muted
-                        playsInline
-                        preload="auto"
-                        className={`h-full w-full object-cover ${isSpeaking || isCompletingInterview ? "scale-[1.01]" : ""}`}
-                      />
-                    ) : (
-                      <Image
-                        src={activeInterviewer.avatar}
-                        alt={`${activeInterviewer.name} interviewer avatar`}
-                        className="h-full w-full object-cover"
-                        priority
-                      />
-                    )}
-                    {(isSpeaking || isCompletingInterview) && (
-                      <div className="absolute inset-0 rounded-full ring-4 ring-primary/25" />
-                    )}
-                  </div>
-                  <div className="mt-5 flex items-end gap-1.5">
-                    {[10, 18, 26, 16, 22].map((height, index) => (
-                      <span
-                        key={height}
-                        className={`w-1.5 rounded-full bg-primary/70 ${isSpeaking || isCompletingInterview ? "animate-pulse" : "opacity-30"}`}
-                        style={{ height: `${height}px`, animationDelay: `${index * 120}ms` }}
-                      />
-                    ))}
-                  </div>
-                  <p className="mt-4 max-w-sm px-6 text-center text-sm font-semibold leading-6 text-slate-700">
-                    {isSpeaking
-                      ? `${activeInterviewer.name} is asking the question...`
-                      : isCompletingInterview
-                        ? "Submitting your interview and starting report generation..."
-                        : isMicActive
-                          ? "Listening to your response..."
-                          : "Reviewing the current question."}
-                  </p>
-                  <p className="mt-1 text-[10px] font-bold uppercase tracking-[0.18em] text-slate-400">
-                    Voice: Indian English
-                  </p>
-                </div>
-              </div>
             </div>
           </aside>
 
@@ -1936,6 +1862,73 @@ export function InterviewView() {
               </div>
             </div>
           </section>
+
+          <aside className="min-h-0">
+            <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+              <div className="border-b border-slate-200 px-3.5 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Bot className="h-4 w-4 shrink-0 text-primary" />
+                    <div className="min-w-0">
+                      <p className="text-[9px] font-bold uppercase tracking-[0.18em] text-primary">AI Interviewer</p>
+                      <p className="truncate text-xs font-semibold text-slate-700">{activeInterviewer.name}</p>
+                    </div>
+                  </div>
+                  <div className={`flex shrink-0 items-center gap-2 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.14em] ${
+                    isSpeaking || isCompletingInterview ? "border-blue-200 bg-blue-50 text-primary" : "border-slate-200 bg-slate-50 text-slate-500"
+                  }`}>
+                    <Radio className={`h-3.5 w-3.5 ${isSpeaking || isCompletingInterview ? "animate-pulse" : ""}`} />
+                    {interviewerState}
+                  </div>
+                </div>
+              </div>
+              <div className="relative aspect-square overflow-hidden bg-slate-100">
+                <div className={`absolute inset-0 bg-gradient-to-br ${activeInterviewer.accent} opacity-10`} />
+                {activeInterviewer.video ? (
+                  <video
+                    key={activeInterviewer.id}
+                    src={activeInterviewer.video}
+                    autoPlay
+                    loop
+                    muted
+                    playsInline
+                    preload="auto"
+                    className="relative h-full w-full object-cover"
+                  />
+                ) : (
+                  <Image
+                    src={activeInterviewer.avatar}
+                    alt={`${activeInterviewer.name} interviewer avatar`}
+                    className="relative h-full w-full object-cover"
+                    priority
+                  />
+                )}
+                {(isSpeaking || isCompletingInterview) && (
+                  <div className="absolute inset-0 ring-4 ring-inset ring-primary/25" />
+                )}
+                <div className="absolute bottom-2 left-2 right-2 rounded-lg border border-slate-200 bg-white/90 px-2.5 py-2 text-center shadow-sm backdrop-blur">
+                  <div className="flex justify-center gap-1.5">
+                    {[10, 18, 26, 16, 22].map((height, index) => (
+                      <span
+                        key={height}
+                        className={`w-1.5 rounded-full bg-primary/70 ${isSpeaking || isCompletingInterview ? "animate-pulse" : "opacity-30"}`}
+                        style={{ height: `${height}px`, animationDelay: `${index * 120}ms` }}
+                      />
+                    ))}
+                  </div>
+                  <p className="mt-1.5 truncate text-[10px] font-semibold text-slate-700">
+                    {isSpeaking
+                      ? "Asking question..."
+                      : isCompletingInterview
+                        ? "Submitting..."
+                        : isMicActive
+                          ? "Listening..."
+                          : "Reviewing question"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
 
         <div className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.85fr)]">
