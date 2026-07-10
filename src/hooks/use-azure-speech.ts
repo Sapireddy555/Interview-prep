@@ -21,7 +21,7 @@ export const useAzureSpeech = (
 ): SpeechHookResult => {
   const [isListening, setIsListening] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
+  const [isVoiceEnabled, setIsVoiceEnabled] = useState(false);
   const [currentTranscript, setCurrentTranscript] = useState("");
   
   const recognizerRef = useRef<SpeechSDK.SpeechRecognizer | null>(null);

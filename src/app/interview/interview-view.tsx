@@ -75,6 +75,8 @@ export function InterviewView() {
     recording: false,
   });
   const [draftResponse, setDraftResponse] = useState("");
+  const [isMultiScreenDetected, setIsMultiScreenDetected] = useState(false);
+  const [isFullscreenLocked, setIsFullscreenLocked] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const candidateIdRef = useRef<string | null>(null);
@@ -198,6 +200,22 @@ export function InterviewView() {
   }, [attachCameraStream]);
 
   const captureFrameFromStream = useCallback(async (stream: MediaStream) => {
+    const activeVideo = videoRef.current || proctorVideoRef.current;
+    if (activeVideo && activeVideo.readyState >= 2 && activeVideo.srcObject === stream) {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = activeVideo.videoWidth || 640;
+        canvas.height = activeVideo.videoHeight || 480;
+        const context = canvas.getContext("2d");
+        if (context) {
+          context.drawImage(activeVideo, 0, 0, canvas.width, canvas.height);
+          return canvas.toDataURL("image/jpeg", 0.92);
+        }
+      } catch (err) {
+        console.warn("Direct canvas draw failed, falling back to temp video element", err);
+      }
+    }
+
     const video = document.createElement("video");
     video.muted = true;
     video.playsInline = true;
@@ -335,7 +353,7 @@ export function InterviewView() {
     },
     {
       id: "resume_projects",
-      label: "Resume Projects",
+      label: "Real-World Projects",
       hint: "Project evidence",
       active: currentQuestionMeta?.sectionId === "resume_projects",
       complete:
@@ -972,6 +990,60 @@ export function InterviewView() {
     candidateIdRef.current = candidateId;
   }, [candidateId]);
 
+  const handleReEnterFullscreen = useCallback(() => {
+    const docEl = document.documentElement;
+    if (docEl.requestFullscreen) {
+      docEl.requestFullscreen()
+        .then(() => setIsFullscreenLocked(false))
+        .catch((err) => {
+          console.warn("Fullscreen request failed on retry:", err);
+          toast({
+            title: "Fullscreen failed",
+            description: "Please allow fullscreen to resume the test.",
+            variant: "destructive",
+          });
+        });
+    }
+  }, [toast]);
+
+  useEffect(() => {
+    const checkScreens = () => {
+      const isExtended = (window.screen as any).isExtended === true || window.screen.width > 2200;
+      setIsMultiScreenDetected(isExtended);
+    };
+
+    checkScreens();
+    window.addEventListener("resize", checkScreens);
+    
+    if ((window.screen as any).addEventListener) {
+      (window.screen as any).addEventListener("change", checkScreens);
+    }
+    
+    return () => {
+      window.removeEventListener("resize", checkScreens);
+      if ((window.screen as any).removeEventListener) {
+        (window.screen as any).removeEventListener("change", checkScreens);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasAcceptedConsent || isCompleted) return;
+
+    const handleFullscreenChange = () => {
+      const isCurrentlyFullscreen = !!document.fullscreenElement;
+      setIsFullscreenLocked(!isCurrentlyFullscreen);
+      if (!isCurrentlyFullscreen) {
+        addSecurityEventRef.current("visibility_hidden", "fullscreen_exited");
+      }
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, [hasAcceptedConsent, isCompleted]);
+
   const runIdentityVerification = useCallback(async (force = false) => {
     const activeInterviewId = interviewId || searchParams.get("interviewId");
     if (!candidateId || !hasAcceptedConsent || !cameraStream || !activeInterviewId) return;
@@ -1004,9 +1076,7 @@ export function InterviewView() {
 
       if (result.success && result.matched) {
         setIdentityStatus("matched");
-        setIdentityMessage(
-          `Identity verified${typeof result.confidence === "number" ? ` (${Math.round(result.confidence * 100)}%)` : ""}.`
-        );
+        setIdentityMessage("Identity verified.");
         setShowIdentityMatchedPopup(true);
         window.setTimeout(() => setShowIdentityMatchedPopup(false), 2200);
         return;
@@ -1302,7 +1372,7 @@ export function InterviewView() {
         if (savedDraft) setDraftResponse(savedDraft);
         if (savedTranscript && !currentTranscript) {
           // Only restore transcript if we don't have one already
-          setCurrentTranscript = savedTranscript; // This won't work, keeping as is
+          // (Speech SDK manages this state; direct assignment is disabled)
         }
       }
     } catch (e) {
@@ -1588,11 +1658,28 @@ export function InterviewView() {
             </label>
           </div>
 
+          <div className="mt-4 p-3 bg-slate-50 rounded-lg border border-dashed text-xs text-slate-600 font-semibold text-center">
+            <span className="font-bold text-slate-900">Note:</span> Your video, transcript, and audio will be accessed by authorized personnel only.
+          </div>
+
+          {isMultiScreenDetected && (
+            <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-800 text-left">
+              <span className="font-bold block">Secondary Display Detected</span>
+              Please disconnect any external monitors or secondary screens. The interview can only start and continue on a single primary monitor.
+            </div>
+          )}
+
           <Button
             className="mt-6 h-11 w-full rounded-lg bg-[#056BFC] text-base font-bold hover:bg-[#024099]"
-            disabled={!allConsentsAccepted}
+            disabled={!allConsentsAccepted || isMultiScreenDetected}
             onClick={() => {
               lastSpokenQuestionIdRef.current = null;
+              const docEl = document.documentElement;
+              if (docEl.requestFullscreen) {
+                docEl.requestFullscreen().catch((err) => {
+                  console.warn("Fullscreen request failed:", err);
+                });
+              }
               setHasAcceptedConsent(true);
             }}
           >
@@ -1777,20 +1864,13 @@ export function InterviewView() {
                       Section Progress {currentSectionQuestionNumber} / {sectionQuestionCounts[currentSectionTitle] || 0}
                     </span>
                   </div>
-                  <p className="mt-2 text-sm font-semibold leading-6 text-slate-900 md:text-[0.95rem]">
+                  <p 
+                    className="mt-2 text-sm font-semibold leading-6 text-slate-900 md:text-[0.95rem] select-none pointer-events-none"
+                    style={{ userSelect: 'none', WebkitUserSelect: 'none', MozUserSelect: 'none', msUserSelect: 'none' }}
+                    onCopy={(e) => e.preventDefault()}
+                  >
                     {currentQuestion?.content}
                   </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {isSpeaking && (
-                    <div className="flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-primary">
-                      <Radio className="h-3 w-3 animate-pulse" />
-                      Speaking
-                    </div>
-                  )}
-                  <Button onClick={toggleVoice} variant="outline" size="sm" className="rounded-lg bg-white" disabled={isSpeaking}>
-                    {isVoiceEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-                  </Button>
                 </div>
               </div>
             </div>
@@ -1809,11 +1889,19 @@ export function InterviewView() {
                           ? "Finish Interview"
                           : "Submit Answer"}
                     </Button>
-                    <Button onClick={handleRecordToggle} disabled={!audioStream || isCompletingInterview} variant="outline" className="h-9 min-w-0 rounded-lg border-slate-300 px-2 text-xs font-bold">
-                      {isRecordingControlled ? "Stop" : "Record"}
-                    </Button>
                     <Button onClick={handleSkipQuestion} disabled={isCompletingInterview} variant="ghost" className="h-9 min-w-0 rounded-lg px-2 text-xs font-bold text-slate-600">
                       Skip
+                    </Button>
+                    <Button 
+                      onClick={handleRecordToggle} 
+                      disabled={!audioStream || isCompletingInterview} 
+                      className={`h-9 min-w-0 rounded-lg px-2 text-xs font-bold transition-all shadow-md ${
+                        isRecordingControlled 
+                          ? "bg-red-600 text-white hover:bg-red-700 animate-pulse ring-2 ring-red-400" 
+                          : "bg-red-500 hover:bg-red-600 text-white"
+                      }`}
+                    >
+                      {isRecordingControlled ? "Stop" : "Record"}
                     </Button>
                   </div>
                   <div className="mt-2">

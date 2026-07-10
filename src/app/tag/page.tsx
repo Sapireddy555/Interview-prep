@@ -62,6 +62,8 @@ export default function RecruiterPortal() {
     email: "",
     role: "Generative AI Engineer",
     difficulty: "medium",
+    l2PanelName: "",
+    l2PanelEmail: "",
   });
   const [bulkFormData, setBulkFormData] = useState({
     testName: "",
@@ -82,6 +84,8 @@ export default function RecruiterPortal() {
       email: "",
       role: "Generative AI Engineer",
       difficulty: "medium",
+      l2PanelName: "",
+      l2PanelEmail: "",
     });
     setSingleResumeFile(null);
     setSingleJobDescriptionFile(null);
@@ -106,6 +110,8 @@ export default function RecruiterPortal() {
       payload.append("email", singleFormData.email);
       payload.append("role", singleFormData.role);
       payload.append("difficulty", singleFormData.difficulty);
+      payload.append("l2PanelName", singleFormData.l2PanelName);
+      payload.append("l2PanelEmail", singleFormData.l2PanelEmail);
       if (singleResumeFile) payload.append("resume", singleResumeFile);
       if (singleJobDescriptionFile) payload.append("jobDescription", singleJobDescriptionFile);
 
@@ -486,6 +492,29 @@ export default function RecruiterPortal() {
                         className={inputClass}
                         value={singleFormData.email}
                         onChange={(e) => setSingleFormData({ ...singleFormData, email: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="l2PanelName" className="text-xs font-bold text-slate-500">L2 Panel Name</Label>
+                      <Input
+                        id="l2PanelName"
+                        placeholder="e.g. John Doe"
+                        className={inputClass}
+                        value={singleFormData.l2PanelName}
+                        onChange={(e) => setSingleFormData({ ...singleFormData, l2PanelName: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="l2PanelEmail" className="text-xs font-bold text-slate-500">L2 Panel Email</Label>
+                      <Input
+                        id="l2PanelEmail"
+                        type="email"
+                        placeholder="john.doe@corp.com"
+                        className={inputClass}
+                        value={singleFormData.l2PanelEmail}
+                        onChange={(e) => setSingleFormData({ ...singleFormData, l2PanelEmail: e.target.value })}
                         required
                       />
                     </div>

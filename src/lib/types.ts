@@ -108,4 +108,9 @@ export type InterviewSession = {
   identityError?: string | null;
   reportStatus?: "pending" | "generating" | "complete" | "failed" | null;
   reportError?: string | null;
+  l2Scorecard?: any | null;
+  l2ScheduledTime?: string | null;
+  l2PanelName?: string | null;
+  l2PanelEmail?: string | null;
+  candidateName?: string | null;
 };

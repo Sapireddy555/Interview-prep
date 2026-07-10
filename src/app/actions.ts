@@ -7,6 +7,8 @@ import {
   normalizeTranscriptForAnalysis,
   setReportStatus,
 } from "@/lib/interview-report";
+import { ai } from "@/ai/genkit";
+import { generateAzureOpenAIJson, isAzureOpenAIConfigured } from "@/lib/azure-openai";
 import { analyzeFrameWithAzure } from "@/lib/azure-vision-proctor";
 import { z } from "zod";
 import crypto from "crypto";
@@ -136,12 +138,23 @@ export async function saveInterviewSession(id: string, session: Omit<InterviewSe
 }
 
 export async function fetchInterviewSessions() {
-    const res = await db.query("SELECT * FROM sessions ORDER BY date DESC");
+    const res = await db.query(
+        `SELECT s.*, c.l2_panel_name, c.l2_panel_email, c.name AS candidate_name
+         FROM sessions s
+         LEFT JOIN candidates c ON s.candidate_id = c.id
+         ORDER BY s.date DESC`
+    );
     return res.rows.map(normalizeSessionRow);
 }
 
 export async function fetchInterviewSession(id: string) {
-    const res = await db.query("SELECT * FROM sessions WHERE id = $1", [id]);
+    const res = await db.query(
+        `SELECT s.*, c.l2_panel_name, c.l2_panel_email, c.name AS candidate_name
+         FROM sessions s
+         LEFT JOIN candidates c ON s.candidate_id = c.id
+         WHERE s.id = $1`,
+        [id]
+    );
     const row = res.rows[0];
     return row ? normalizeSessionRow(row) : null;
 }
@@ -253,6 +266,8 @@ export async function validateCandidateUniqueId(id: string) {
                 email: candidate.email,
                 role: candidate.role,
                 difficulty: candidate.difficulty,
+                l2PanelName: candidate.l2_panel_name,
+                l2PanelEmail: candidate.l2_panel_email,
             },
         };
     } catch (error) {
@@ -341,6 +356,8 @@ export async function registerCandidateAction(formData: FormData) {
     const email = String(formData.get("email") || "").trim();
     const role = String(formData.get("role") || "Generative AI Engineer").trim();
     const difficulty = String(formData.get("difficulty") || "medium").trim();
+    const l2PanelName = String(formData.get("l2PanelName") || "").trim();
+    const l2PanelEmail = String(formData.get("l2PanelEmail") || "").trim();
     const resume = formData.get("resume");
     const jobDescription = formData.get("jobDescription");
 
@@ -365,13 +382,14 @@ export async function registerCandidateAction(formData: FormData) {
             extractTextWithADI(resume),
             extractTextWithADI(jobDescription),
         ]);
-        const questionBank = buildCandidateQuestionBank(role, resumeText, jobDescriptionText);
+        const questionBank = await generateQuestionBankWithAI(role, difficulty, resumeText, jobDescriptionText);
 
         await db.query(
             `INSERT INTO candidates (
                 id, name, email, role, difficulty, resume_url, resume_file_name,
-                job_description_url, job_description_file_name, resume_text, job_description_text, question_bank
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+                job_description_url, job_description_file_name, resume_text, job_description_text, question_bank,
+                l2_panel_name, l2_panel_email
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
             [
                 uniqueId,
                 name,
@@ -385,6 +403,8 @@ export async function registerCandidateAction(formData: FormData) {
                 resumeText,
                 jobDescriptionText,
                 questionBank,
+                l2PanelName,
+                l2PanelEmail,
             ]
         );
         
@@ -610,6 +630,65 @@ function buildCandidateQuestionBank(role: string, resumeText: string, _jobDescri
     return [...technicalQuestions, ...resumeQuestions].join("\n");
 }
 
+export async function generateQuestionBankWithAI(
+  role: string,
+  difficulty: string,
+  resumeText: string,
+  jobDescriptionText: string
+): Promise<string> {
+  const promptText = `You are a Senior Principal Interviewer generating structured, role-specific interview questions.
+Generate exactly 5 technical questions and exactly 3 project-based questions for a candidate interviewing for the role of ${role} (${difficulty} level).
+
+CANDIDATE RESUME TEXT:
+${resumeText || "No resume provided."}
+
+JOB DESCRIPTION TEXT:
+${jobDescriptionText || "No job description provided."}
+
+INSTRUCTIONS:
+1. Generate exactly 5 technical questions. Prefix each question with "[technical]". These must cover core skills needed for the role and the job description.
+2. Generate exactly 3 real-world project questions. Prefix each question with "[resume_projects]". These should query specific achievements, decisions, trade-offs, or architectures mentioned in their resume projects. If no resume projects are available, generate scenario-based project design questions.
+3. Make sure all questions are challenging and direct (max 1-2 sentences each). Do not include introductory text, explanations, or notes.
+4. Output them as separate lines, each starting with the appropriate tag prefix.
+
+Example Output format:
+[technical] Question 1
+[technical] Question 2
+[technical] Question 3
+[technical] Question 4
+[technical] Question 5
+[resume_projects] Project Question 1
+[resume_projects] Project Question 2
+[resume_projects] Project Question 3
+`;
+
+  try {
+    const preferAzure = process.env.AI_PRIMARY_PROVIDER?.toLowerCase() === 'azure';
+    if (preferAzure && isAzureOpenAIConfigured()) {
+      const response = await generateAzureOpenAIJson<{ questions: string[] }>({
+        system: "You are an expert technical interviewer. You output strict JSON matching the requested schema.",
+        user: `${promptText}\nReturn JSON in this shape: { "questions": ["(tagged question 1)", ...] }`,
+        temperature: 0.75,
+      });
+      if (response && Array.isArray(response.questions)) {
+        return response.questions.join("\n");
+      }
+    }
+
+    // Default to Gemini (using genkit)
+    const geminiResponse = await ai.generate({
+      prompt: promptText,
+      config: {
+        temperature: 0.75,
+      }
+    });
+    return geminiResponse.text;
+  } catch (error) {
+    console.error("AI question generation failed, falling back to static questions:", error);
+    return buildCandidateQuestionBank(role, resumeText, jobDescriptionText);
+  }
+}
+
 
 const proctoringInputSchema = z.object({
   videoFrameDataUri: z.string(),
@@ -758,6 +837,11 @@ function normalizeSessionRow(row: any): InterviewSession {
     identityError: row.identity_error ?? null,
     reportStatus: row.report_status ?? "pending",
     reportError: row.report_error ?? null,
+    l2Scorecard: row.l2_scorecard ?? null,
+    l2ScheduledTime: row.l2_scheduled_time ? (typeof row.l2_scheduled_time === 'string' ? row.l2_scheduled_time : row.l2_scheduled_time.toISOString()) : null,
+    l2PanelName: row.l2_panel_name ?? null,
+    l2PanelEmail: row.l2_panel_email ?? null,
+    candidateName: row.candidate_name ?? null,
   };
 }
 
@@ -835,7 +919,7 @@ async function uploadCandidateDocumentToAzure(candidateId: string, file: File, d
             },
         });
 
-        return { url: blockBlobClient.url };
+        return { url: (blockBlobClient as any).url };
     } catch (error) {
         console.error(`Failed to upload ${documentType} to Azure:`, error);
         throw new Error(`Failed to upload ${documentType} PDF to Azure Storage.`);
@@ -902,7 +986,7 @@ async function uploadCandidateSelfieToAzure(candidateId: string, buffer: Buffer,
         },
     });
 
-    return { url: blockBlobClient.url, blobName };
+    return { url: (blockBlobClient as any).url, blobName };
 }
 
 async function downloadCandidateSelfieFromAzure(blobName: string) {
@@ -1030,7 +1114,7 @@ async function analyzeIdentityImageWithAzureVision(image: Buffer, label: string)
             "Ocp-Apim-Subscription-Key": key,
             "Content-Type": "application/octet-stream",
         },
-        body: image,
+        body: new Uint8Array(image),
     }, Number(process.env.AZURE_VISION_TIMEOUT_MS || "15000"));
 
     if (!response.ok) {
@@ -1116,7 +1200,7 @@ async function detectFacesWithAzureFace(image: Buffer, returnFaceId: boolean) {
             "Ocp-Apim-Subscription-Key": key,
             "Content-Type": "application/octet-stream",
         },
-        body: image,
+        body: new Uint8Array(image),
     });
 
     if (!response.ok) {
@@ -1468,91 +1552,203 @@ function formatReportToHtml(id: string, report: any, session: any): string {
     return `
       <section style="border: 1px solid ${colors.border}; background: ${colors.soft}; border-radius: 20px; padding: 24px; margin-bottom: 20px;">
         <div style="display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 12px;">
-          <h2 style="margin: 0; color: ${colors.heading}; font-size: 22px;">${escapeHtml(section.sectionTitle)}</h2>
-          <span style="background: ${colors.accent}; color: white; padding: 8px 14px; border-radius: 999px; font-weight: 700;">${section.score}/100</span>
+          <h2 style="margin: 0; color: ${colors.heading}; font-size: 20px; font-weight: 700;">${escapeHtml(section.sectionTitle)}</h2>
+          <span style="background: ${colors.accent}; color: white; padding: 8px 16px; border-radius: 999px; font-weight: 700; font-size: 14px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);">${section.score}/100</span>
         </div>
-        <p style="margin: 0 0 16px 0; color: #334155; line-height: 1.6;">${escapeHtml(section.summary || "")}</p>
+        <p style="margin: 0 0 16px 0; color: #334155; line-height: 1.6; font-size: 14px;">${escapeHtml(section.summary || "")}</p>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-          <div style="background: white; border-radius: 16px; padding: 16px;">
-            <h3 style="margin: 0 0 10px 0; color: ${colors.heading}; font-size: 15px;">Strengths</h3>
-            <ul style="margin: 0; padding-left: 18px; color: #334155;">${strengths || '<li>Not specified</li>'}</ul>
+          <div style="background: white; border-radius: 16px; padding: 16px; border: 1px solid rgba(0,0,0,0.05);">
+            <h3 style="margin: 0 0 10px 0; color: ${colors.heading}; font-size: 14px; font-weight: 700;">Strengths</h3>
+            <ul style="margin: 0; padding-left: 18px; color: #475569; font-size: 13.5px; line-height: 1.5;">${strengths || '<li>Not specified</li>'}</ul>
           </div>
-          <div style="background: white; border-radius: 16px; padding: 16px;">
-            <h3 style="margin: 0 0 10px 0; color: ${colors.heading}; font-size: 15px;">Improvement Areas</h3>
-            <ul style="margin: 0; padding-left: 18px; color: #334155;">${improvements || '<li>Not specified</li>'}</ul>
+          <div style="background: white; border-radius: 16px; padding: 16px; border: 1px solid rgba(0,0,0,0.05);">
+            <h3 style="margin: 0 0 10px 0; color: ${colors.heading}; font-size: 14px; font-weight: 700;">Improvement Areas</h3>
+            <ul style="margin: 0; padding-left: 18px; color: #475569; font-size: 13.5px; line-height: 1.5;">${improvements || '<li>Not specified</li>'}</ul>
           </div>
         </div>
-        <div style="margin-top: 16px; background: rgba(255,255,255,0.75); border-radius: 16px; padding: 16px;">
-          <h3 style="margin: 0 0 10px 0; color: ${colors.heading}; font-size: 15px;">Questions Covered</h3>
-          <ul style="margin: 0; padding-left: 18px; color: #475569;">${renderQuestionListItems(questionSet, section.sectionTitle)}</ul>
+        <div style="margin-top: 16px; background: rgba(255,255,255,0.75); border-radius: 16px; padding: 16px; border: 1px solid rgba(0,0,0,0.02);">
+          <h3 style="margin: 0 0 10px 0; color: ${colors.heading}; font-size: 14px; font-weight: 700;">Questions Covered</h3>
+          <ul style="margin: 0; padding-left: 18px; color: #475569; font-size: 13.5px; line-height: 1.5;">${renderQuestionListItems(questionSet, section.sectionTitle)}</ul>
         </div>
       </section>
     `;
   }).join("");
 
-  const questionFeedbackRows = (report.questionFeedback || []).map((question: any, index: number) => `
-    <tr>
-      <td style="padding: 12px; border-top: 1px solid #e2e8f0;">Q${index + 1}</td>
-      <td style="padding: 12px; border-top: 1px solid #e2e8f0;">${escapeHtml(question.sectionTitle || "General")}</td>
-      <td style="padding: 12px; border-top: 1px solid #e2e8f0;">${escapeHtml(question.question || "")}</td>
-      <td style="padding: 12px; border-top: 1px solid #e2e8f0; font-weight: 700;">${question.score}/100</td>
-      <td style="padding: 12px; border-top: 1px solid #e2e8f0;">${escapeHtml(question.feedback || "")}</td>
-    </tr>
-  `).join("");
+  const transcriptList = Array.isArray(session.transcript) ? session.transcript : [];
+  const questionFeedbackRows = (report.questionFeedback || []).map((question: any, index: number) => {
+    let userResponse = "No answer was recorded.";
+    const qIndex = transcriptList.findIndex(
+      (msg: any) => msg.role === "ai" && msg.content?.trim().toLowerCase() === question.question?.trim().toLowerCase()
+    );
+    if (qIndex !== -1 && qIndex + 1 < transcriptList.length) {
+      const nextMsg = transcriptList[qIndex + 1];
+      if (nextMsg.role === "user") {
+        userResponse = nextMsg.content;
+      }
+    } else {
+      const qIndexSub = transcriptList.findIndex(
+        (msg: any) => msg.role === "ai" && (msg.content?.toLowerCase().includes(question.question?.toLowerCase().slice(0, 30)) || question.question?.toLowerCase().includes(msg.content?.toLowerCase().slice(0, 30)))
+      );
+      if (qIndexSub !== -1 && qIndexSub + 1 < transcriptList.length) {
+        const nextMsg = transcriptList[qIndexSub + 1];
+        if (nextMsg.role === "user") {
+          userResponse = nextMsg.content;
+        }
+      }
+    }
+
+    return `
+      <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 16px 12px; font-weight: bold; color: #64748b; font-size: 13px;">Q${index + 1}</td>
+        <td style="padding: 16px 12px; font-weight: 600; color: #1e3a8a; font-size: 13px;">${escapeHtml(question.sectionTitle || "General")}</td>
+        <td style="padding: 16px 12px; color: #334155; font-size: 13.5px; line-height: 1.5; font-weight: 500;">${escapeHtml(question.question || "")}</td>
+        <td style="padding: 16px 12px; background: #fafafa; border-left: 3px solid #3b82f6; font-style: italic; white-space: pre-wrap; font-size: 13px; color: #475569; line-height: 1.5;">"${escapeHtml(userResponse)}"</td>
+        <td style="padding: 16px 12px; font-weight: 800; color: #0f172a; font-size: 14px;">${question.score}/100</td>
+        <td style="padding: 16px 12px; color: #475569; font-size: 13px; line-height: 1.5;">${escapeHtml(question.feedback || "")}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const rawDuration = parseFloat(session.duration || "0");
+  const min = Math.floor(rawDuration / 60);
+  const sec = Math.floor(rawDuration % 60);
+  const formattedDuration = `${min}m ${sec}s`;
+  const violationsList = Array.isArray(session.violations) ? session.violations : [];
+  const violationCount = violationsList.length;
+
+  let recBadgeBg = "#10b981"; // green
+  if (report.hiringRecommendation === "No Hire") {
+    recBadgeBg = "#ef4444"; // red
+  } else if (report.hiringRecommendation === "Leaning Hire") {
+    recBadgeBg = "#f59e0b"; // amber
+  }
 
   return `
-    <div style="font-family: Arial, sans-serif; color: #0f172a; background: #f8fafc; padding: 24px;">
-      <div style="max-width: 1120px; margin: 0 auto;">
-        <div style="background: linear-gradient(135deg, #0f172a, #1d4ed8); color: white; border-radius: 24px; padding: 28px; margin-bottom: 24px;">
-          <div style="display: flex; justify-content: space-between; gap: 20px; align-items: start;">
-            <div>
-              <div style="font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; opacity: 0.8;">Interview Assessment Report</div>
-              <h1 style="margin: 8px 0 6px 0; font-size: 32px;">${escapeHtml(session.role || "Interview")}</h1>
-              <p style="margin: 0; max-width: 720px; line-height: 1.7; opacity: 0.92;">${escapeHtml(report.summary || "")}</p>
-            </div>
-            <div style="min-width: 210px; background: rgba(255,255,255,0.12); border-radius: 20px; padding: 18px;">
-              <div style="font-size: 12px; opacity: 0.8; text-transform: uppercase;">Overall Score</div>
-              <div style="font-size: 40px; font-weight: 800; margin: 6px 0 12px 0;">${report.overallScore}/100</div>
-              <div style="font-size: 12px; opacity: 0.8; text-transform: uppercase;">Recommendation</div>
-              <div style="font-size: 18px; font-weight: 700; margin-top: 6px;">${escapeHtml(report.hiringRecommendation || "")}</div>
+    <div style="font-family: 'Plus Jakarta Sans', Arial, sans-serif; color: #1e293b; background: #f8fafc; padding: 32px 16px; min-height: 100vh; line-height: 1.5;">
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+      </style>
+      <div style="max-width: 1080px; margin: 0 auto; background: white; border-radius: 24px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05), 0 4px 6px -4px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; overflow: hidden;">
+        
+        <!-- Premium Branding Header -->
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 20px 32px; background: #ffffff; border-bottom: 1px solid #f1f5f9;">
+          <img src="https://valuemomentum.com/wp-content/uploads/2026/03/ValueMomentum_logo.svg" style="height: 32px; width: auto;" alt="ValueMomentum Logo" />
+          <span style="font-size: 11px; font-weight: 800; letter-spacing: 0.2em; text-transform: uppercase; color: #94a3b8; background: #f8fafc; padding: 6px 12px; border-radius: 8px; border: 1px solid #f1f5f9;">Aura AI Assessment Report</span>
+        </div>
+
+        <!-- Banner Block -->
+        <div style="background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%); color: white; padding: 40px 32px; position: relative;">
+          <div style="display: flex; flex-direction: column; justify-content: space-between; gap: 24px; align-items: flex-start;">
+            <div style="flex: 1; width: 100%;">
+              <div style="font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; opacity: 0.75; font-weight: 700;">Aura AI Assessment</div>
+              <div style="display: flex; justify-content: space-between; align-items: center; width: 100%; flex-wrap: wrap; gap: 16px; margin-top: 8px;">
+                <h1 style="margin: 0; font-size: 32px; font-weight: 800; tracking-tight; line-height: 1.2;">${escapeHtml(session.role || "Software Engineer")}</h1>
+                <div style="background: rgba(255,255,255,0.07); backdrop-filter: blur(10px); border-radius: 16px; padding: 12px 20px; border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 12px rgba(0,0,0,0.1); text-align: right; min-width: 140px;">
+                  <div style="font-size: 10px; opacity: 0.75; text-transform: uppercase; font-weight: 700; letter-spacing: 0.05em; margin-bottom: 2px;">L1 Score</div>
+                  <div style="font-size: 28px; font-weight: 850; font-family: monospace;">${report.overallScore}<span style="font-size: 16px; font-weight: 500; opacity: 0.7;">%</span></div>
+                </div>
+              </div>
+              <p style="margin: 12px 0 0 0; max-width: 680px; line-height: 1.6; opacity: 0.9; font-size: 14.5px; font-weight: 400;">${escapeHtml(report.summary || "")}</p>
             </div>
           </div>
         </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px;">
-          <section style="background: white; border-radius: 20px; padding: 22px; box-shadow: 0 8px 30px rgba(15,23,42,0.06);">
-            <h2 style="margin: 0 0 14px 0; font-size: 20px;">Top Strengths</h2>
-            <ul style="margin: 0; padding-left: 18px; color: #334155;">${(report.strengths || []).map((item: string) => `<li style="margin-bottom: 8px;">${escapeHtml(item)}</li>`).join("")}</ul>
-          </section>
-          <section style="background: white; border-radius: 20px; padding: 22px; box-shadow: 0 8px 30px rgba(15,23,42,0.06);">
-            <h2 style="margin: 0 0 14px 0; font-size: 20px;">Areas to Watch</h2>
-            <ul style="margin: 0; padding-left: 18px; color: #334155;">${(report.weaknesses || []).map((item: string) => `<li style="margin-bottom: 8px;">${escapeHtml(item)}</li>`).join("")}</ul>
-          </section>
-        </div>
-        ${sectionBlocks}
-        <section style="background: white; border-radius: 20px; padding: 22px; margin-bottom: 24px; box-shadow: 0 8px 30px rgba(15,23,42,0.06);">
-          <h2 style="margin: 0 0 12px 0; font-size: 20px;">Detailed Commentary</h2>
-          <p style="margin: 0 0 16px 0; color: #334155;"><strong>Behavioral:</strong> ${escapeHtml(report.behavioralFeedback || "")}</p>
-          <p style="margin: 0; color: #334155;"><strong>Technical:</strong> ${escapeHtml(report.technicalFeedback || "")}</p>
-        </section>
-        <section style="background: white; border-radius: 20px; padding: 22px; box-shadow: 0 8px 30px rgba(15,23,42,0.06);">
-          <h2 style="margin: 0 0 12px 0; font-size: 20px;">Question-by-Question Breakdown</h2>
-          <div style="overflow-x: auto;">
-            <table style="width: 100%; border-collapse: collapse; color: #334155;">
-              <thead>
-                <tr style="background: #eff6ff; color: #1e3a8a;">
-                  <th style="text-align: left; padding: 12px;">#</th>
-                  <th style="text-align: left; padding: 12px;">Section</th>
-                  <th style="text-align: left; padding: 12px;">Question</th>
-                  <th style="text-align: left; padding: 12px;">Score</th>
-                  <th style="text-align: left; padding: 12px;">Feedback</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${questionFeedbackRows}
-              </tbody>
-            </table>
+
+        <div style="padding: 32px;">
+
+          <!-- Session Metadata Cards -->
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 32px;">
+            <div style="background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 16px; padding: 16px;">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8;">Candidate Name</div>
+              <div style="font-size: 15px; font-weight: 700; color: #0f172a; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(session.candidateName || "Candidate")}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 16px; padding: 16px;">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8;">Session ID</div>
+              <div style="font-size: 13.5px; font-weight: 700; color: #056bfc; margin-top: 4px; font-family: monospace;">${id}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 16px; padding: 16px;">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8;">Interview Level</div>
+              <div style="font-size: 14.5px; font-weight: 700; color: #0f172a; margin-top: 4px; text-transform: capitalize;">${escapeHtml(session.difficulty || "medium")}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 16px; padding: 16px;">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: #94a3b8;">Duration</div>
+              <div style="font-size: 14.5px; font-weight: 700; color: #0f172a; margin-top: 4px;">${formattedDuration}</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 16px; padding: 16px; ${violationCount > 0 ? 'border-color: #fca5a5; background: #fff5f5;' : ''}">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: ${violationCount > 0 ? '#ef4444' : '#94a3b8'};">Proctoring Flags</div>
+              <div style="font-size: 14.5px; font-weight: 700; color: ${violationCount > 0 ? '#ef4444' : '#0f172a'}; margin-top: 4px;">${violationCount} Alerts</div>
+            </div>
+            <div style="background: #f8fafc; border: 1px solid #f1f5f9; border-radius: 16px; padding: 16px; ${session.suspicionScore > 50 ? 'border-color: #fde047; background: #fefce8;' : ''}">
+              <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; color: ${session.suspicionScore > 50 ? '#ca8a04' : '#94a3b8'};">Suspicion Index</div>
+              <div style="font-size: 14.5px; font-weight: 700; color: ${session.suspicionScore > 50 ? '#ca8a04' : '#0f172a'}; margin-top: 4px;">${session.suspicionScore || 0}%</div>
+            </div>
           </div>
-        </section>
+
+          <!-- Summary Highlights (Strengths vs Areas to Watch) -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px;">
+            <section style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);">
+              <h2 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+                <span style="display: inline-block; width: 8px; height: 16px; background-color: #10b981; border-radius: 4px;"></span>
+                Top Strengths
+              </h2>
+              <ul style="margin: 0; padding-left: 18px; color: #475569; font-size: 14px; line-height: 1.6;">${(report.strengths || []).map((item: string) => `<li style="margin-bottom: 10px;">${escapeHtml(item)}</li>`).join("")}</ul>
+            </section>
+            <section style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);">
+              <h2 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 800; color: #0f172a; display: flex; align-items: center; gap: 8px;">
+                <span style="display: inline-block; width: 8px; height: 16px; background-color: #ef4444; border-radius: 4px;"></span>
+                Areas to Watch
+              </h2>
+              <ul style="margin: 0; padding-left: 18px; color: #475569; font-size: 14px; line-height: 1.6;">${(report.weaknesses || []).map((item: string) => `<li style="margin-bottom: 10px;">${escapeHtml(item)}</li>`).join("")}</ul>
+            </section>
+          </div>
+
+          <!-- Section Feedback Blocks -->
+          <div style="margin-bottom: 32px;">
+            ${sectionBlocks}
+          </div>
+
+          <!-- Detailed Commentary -->
+          <section style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; margin-bottom: 32px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02);">
+            <h2 style="margin: 0 0 18px 0; font-size: 18px; font-weight: 800; color: #0f172a;">Detailed Commentary</h2>
+            <div style="display: flex; flex-direction: column; gap: 16px;">
+              <div style="background: #f8fafc; padding: 18px; border-radius: 14px; border: 1px solid #f1f5f9;">
+                <strong style="color: #1e3a8a; font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 6px;">Behavioral Feedback</strong>
+                <p style="margin: 0; color: #334155; font-size: 14px; line-height: 1.6;">${escapeHtml(report.behavioralFeedback || "")}</p>
+              </div>
+              <div style="background: #f8fafc; padding: 18px; border-radius: 14px; border: 1px solid #f1f5f9;">
+                <strong style="color: #1e3a8a; font-size: 13.5px; text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 6px;">Technical Feedback</strong>
+                <p style="margin: 0; color: #334155; font-size: 14px; line-height: 1.6;">${escapeHtml(report.technicalFeedback || "")}</p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Question-by-Question Breakdown -->
+          <section style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 20px; padding: 24px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); overflow: hidden;">
+            <h2 style="margin: 0 0 18px 0; font-size: 18px; font-weight: 800; color: #0f172a;">Question-by-Question Breakdown</h2>
+            <div style="overflow-x: auto; margin: 0 -24px -24px -24px;">
+              <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead>
+                  <tr style="background: #eff6ff; border-top: 1px solid #e2e8f0; border-bottom: 1px solid #dbeafe;">
+                    <th style="padding: 14px 12px; font-weight: 800; color: #1e3a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; width: 45px;">#</th>
+                    <th style="padding: 14px 12px; font-weight: 800; color: #1e3a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; width: 100px;">Section</th>
+                    <th style="padding: 14px 12px; font-weight: 800; color: #1e3a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; width: 220px;">Question</th>
+                    <th style="padding: 14px 12px; font-weight: 800; color: #1e3a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; width: 280px;">Candidate Answer</th>
+                    <th style="padding: 14px 12px; font-weight: 800; color: #1e3a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; width: 85px;">Score</th>
+                    <th style="padding: 14px 12px; font-weight: 800; color: #1e3a8a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;">Feedback</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${questionFeedbackRows}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+        </div>
+
+        <div style="background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 20px 32px; text-align: center; font-size: 11px; font-weight: bold; color: #94a3b8; letter-spacing: 0.05em;">
+          ValueMomentum Mock Interview Platform &bull; Evaluation Powered by Aura AI Engine
+        </div>
+
       </div>
     </div>
   `;
@@ -1652,7 +1848,7 @@ export async function uploadViolationScreenshot(formData: FormData) {
       blobHTTPHeaders: { blobContentType: imageFile.type || "image/png" },
     });
 
-    const url = sasUrl ? `${sasUrl.replace(/\/$/, '')}/${blobName}` : `${containerClient.url}/${blobName}`;
+    const url = sasUrl ? `${sasUrl.replace(/\/$/, '')}/${blobName}` : `${(containerClient as any).url}/${blobName}`;
 
     const event = [{ timestamp, type: "proctoring_violation", imageUrl: url }];
     await db.query("UPDATE sessions SET violations = COALESCE(violations, '[]'::jsonb) || $1::jsonb WHERE id = $2", [JSON.stringify(event), interviewId]);
@@ -1673,3 +1869,180 @@ export async function uploadViolationScreenshot(formData: FormData) {
     return { success: false, error: String(error) };
   }
 }
+
+export async function fetchPanelCandidates(panelEmail: string) {
+    try {
+        const res = await db.query(
+            `SELECT 
+                s.id AS session_id,
+                s.score AS l1_score,
+                s.summary_report,
+                s.reviewer_scorecard,
+                s.l2_scorecard,
+                s.l2_scheduled_time,
+                c.id AS candidate_id,
+                c.name AS candidate_name,
+                c.email AS candidate_email,
+                c.resume_text,
+                c.l2_panel_name,
+                c.l2_panel_email
+             FROM sessions s
+             INNER JOIN candidates c ON s.candidate_id = c.id
+             WHERE LOWER(c.l2_panel_email) = LOWER($1)
+               AND (s.summary_report->>'hiringRecommendation' = 'Strong Hire' 
+                    OR s.summary_report->>'hiringRecommendation' = 'Hire' 
+                    OR s.summary_report->>'hiringRecommendation' = 'Leaning Hire')
+             ORDER BY s.date DESC`,
+            [panelEmail.trim()]
+        );
+
+        return {
+            success: true,
+            candidates: res.rows.map((row) => ({
+                sessionId: row.session_id,
+                l1Score: row.l1_score,
+                summaryReport: row.summary_report,
+                reviewerScorecard: row.reviewer_scorecard,
+                l2Scorecard: row.l2_scorecard || {},
+                l2ScheduledTime: row.l2_scheduled_time ? (typeof row.l2_scheduled_time === 'string' ? row.l2_scheduled_time : row.l2_scheduled_time.toISOString()) : null,
+                candidateId: row.candidate_id,
+                candidateName: row.candidate_name,
+                candidateEmail: row.candidate_email,
+                resumeText: row.resume_text,
+                l2PanelName: row.l2_panel_name,
+                l2PanelEmail: row.l2_panel_email
+            }))
+        };
+    } catch (error) {
+        console.error("Error fetching panel candidates:", error);
+        return { success: false, candidates: [], error: String(error) };
+    }
+}
+
+export async function saveL2ScorecardAction(input: { sessionId: string; scorecard: any }) {
+    try {
+        await db.query(
+            "UPDATE sessions SET l2_scorecard = $1 WHERE id = $2",
+            [JSON.stringify(input.scorecard), input.sessionId]
+        );
+        return { success: true };
+    } catch (error) {
+        console.error("Error saving L2 scorecard:", error);
+        return { success: false, error: String(error) };
+    }
+}
+
+export async function scheduleL2InterviewAction(input: { sessionId: string; scheduledTime: string; panelEmail?: string; panelName?: string }) {
+    try {
+        if (input.panelEmail && input.panelName) {
+            await db.query(
+                `UPDATE candidates SET l2_panel_email = $1, l2_panel_name = $2 
+                 WHERE id = (SELECT candidate_id FROM sessions WHERE id = $3)`,
+                [input.panelEmail, input.panelName, input.sessionId]
+            );
+        }
+        await db.query(
+            "UPDATE sessions SET l2_scheduled_time = $1 WHERE id = $2",
+            [input.scheduledTime, input.sessionId]
+        );
+        return { success: true };
+    } catch (error) {
+        console.error("Error scheduling L2 interview:", error);
+        return { success: false, error: String(error) };
+    }
+}
+
+export async function generatePanelL2QuestionsAction(candidateId: string) {
+    try {
+        const res = await db.query("SELECT name, role, resume_text FROM candidates WHERE id = $1", [candidateId]);
+        const candidate = res.rows[0];
+        if (!candidate) return { success: false, error: "Candidate not found." };
+
+        const resume = compactDocumentText(candidate.resume_text || "");
+        if (!resume) {
+            return {
+                success: true,
+                questions: [
+                    "Walk me through the architecture of a complex project you designed.",
+                    "What was the hardest technical decision you made on your last project, and what trade-offs did you face?",
+                    "How do you handle scalability and concurrent requests in production environments?"
+                ]
+            };
+        }
+
+        const promptText = `You are a Senior Principal Interviewer conducting an L2 Technical Assessment for the role of ${candidate.role || "Software Engineer"}.
+Based on the candidate's resume text below, extract their primary projects and generate exactly 3 deep-dive, project-specific technical questions that an L2 panel member should ask to evaluate their engineering depth, architectural decisions, and trade-offs.
+
+CANDIDATE NAME: ${candidate.name}
+CANDIDATE RESUME TEXT:
+${resume}
+
+INSTRUCTIONS:
+1. Generate exactly 3 technical questions targeting their specific projects.
+2. Focus on architecture, scale, failure modes, database choice, or engineering decisions they made.
+3. Keep the questions direct and professional.
+4. Output them as a JSON list.
+
+Return JSON in this shape: { "questions": ["Question 1...", "Question 2...", "Question 3..."] }
+`;
+
+        try {
+            const preferAzure = process.env.AI_PRIMARY_PROVIDER?.toLowerCase() === 'azure';
+            if (preferAzure && isAzureOpenAIConfigured()) {
+                const response = await generateAzureOpenAIJson<{ questions: string[] }>({
+                    system: "You are an expert technical interviewer.",
+                    user: promptText,
+                    temperature: 0.75,
+                });
+                if (response && Array.isArray(response.questions)) {
+                    return { success: true, questions: response.questions };
+                }
+            }
+
+            const geminiResponse = await ai.generate({
+                prompt: promptText,
+                config: {
+                    temperature: 0.75,
+                }
+            });
+
+            let questions = [];
+            try {
+                // Try JSON parsing
+                let jsonStr = geminiResponse.text;
+                const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+                if (jsonMatch) jsonStr = jsonMatch[0];
+                const parsed = JSON.parse(jsonStr);
+                questions = parsed.questions || [];
+            } catch {
+                questions = geminiResponse.text
+                    .split(/\n+/)
+                    .map((q) => q.replace(/^\d+\.\s*|^- \s*/, "").trim())
+                    .filter(Boolean)
+                    .slice(0, 3);
+            }
+
+            if (!questions.length) {
+                throw new Error("No questions extracted.");
+            }
+
+            return { success: true, questions };
+        } catch (aiError) {
+            console.error("AI questions extraction failed, falling back to static questions:", aiError);
+            const projects = extractResumeProjectsFromText(resume, 1);
+            const resumeQuestions = projects.length
+                ? buildResumeProjectQuestionPrompts(projects, candidate.role || "Software Engineer", 3)
+                : [
+                    "Walk me through the architecture of a complex project you designed.",
+                    "What was the hardest technical decision you made on your last project, and what trade-offs did you face?",
+                    "How do you handle scalability and concurrent requests in production environments?"
+                ];
+            return { success: true, questions: resumeQuestions.map(q => q.replace(/^\[resume_projects\]\s*/i, "")) };
+        }
+    } catch (error) {
+        console.error("Error generating panel L2 questions:", error);
+        return { success: false, error: String(error) };
+    }
+}
+
+
