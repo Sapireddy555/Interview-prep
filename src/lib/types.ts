@@ -113,4 +113,5 @@ export type InterviewSession = {
   l2PanelName?: string | null;
   l2PanelEmail?: string | null;
   candidateName?: string | null;
+  candidateId?: string | null;
 };

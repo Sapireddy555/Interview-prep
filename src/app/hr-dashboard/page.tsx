@@ -41,6 +41,52 @@ export default function HRDashboardPage() {
   const [panelEmail, setPanelEmail] = useState("");
   const [panelName, setPanelName] = useState("");
   const [isScheduling, setIsScheduling] = useState(false);
+  const [purgingId, setPurgingId] = useState<string | null>(null);
+
+  const handlePurgeCandidate = async (candidateId: string | null | undefined, name: string) => {
+    if (!candidateId) {
+      toast({
+        variant: "destructive",
+        title: "Cannot Purge",
+        description: "No candidate ID associated with this session.",
+      });
+      return;
+    }
+
+    const confirmPurge = window.confirm(
+      `WARNING: Are you sure you want to permanently delete all data, resumes, video recordings, and evaluation records for candidate "${name}"?\n\nThis complies with DPDP Act (Right to Erase) and cannot be undone.`
+    );
+    if (!confirmPurge) return;
+
+    setPurgingId(candidateId);
+    try {
+      const { purgeCandidateDataAction } = await import("../actions/privacy");
+      const result = await purgeCandidateDataAction(candidateId);
+
+      if (result.success) {
+        toast({
+          title: "Data Purged Successfully",
+          description: `All records and cloud artifacts for "${name}" have been permanently erased.`,
+        });
+        setSessions(prev => prev.filter(s => s.candidateId !== candidateId));
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Purge Failed",
+          description: result.error || "Please try again.",
+        });
+      }
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Purge Error",
+        description: "An unexpected error occurred during database purge.",
+      });
+    } finally {
+      setPurgingId(null);
+    }
+  };
 
   useEffect(() => {
     async function loadSessions() {
@@ -245,6 +291,15 @@ export default function HRDashboardPage() {
                               Schedule L2
                             </Button>
                           )}
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            disabled={purgingId === s.candidateId}
+                            onClick={() => handlePurgeCandidate(s.candidateId, s.candidateName || s.id)}
+                            className="h-8 px-2 text-xs"
+                          >
+                            {purgingId === s.candidateId ? "Purging..." : "Purge Data"}
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>

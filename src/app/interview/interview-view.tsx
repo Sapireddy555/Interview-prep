@@ -10,6 +10,7 @@ import {
   uploadViolationScreenshot,
   fetchInterviewQuestionBank,
   verifyCandidateSelfieAction,
+  recordCandidateConsentAction,
 } from "@/app/actions";
 import { getInterviewQuestionSetForRole, INTERVIEW_SECTION_TITLES } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
@@ -1658,8 +1659,8 @@ export function InterviewView() {
             </label>
           </div>
 
-          <div className="mt-4 p-3 bg-slate-50 rounded-lg border border-dashed text-xs text-slate-600 font-semibold text-center">
-            <span className="font-bold text-slate-900">Note:</span> Your video, transcript, and audio will be accessed by authorized personnel only.
+          <div className="mt-4 p-3 bg-slate-50 rounded-lg border border-dashed text-xs text-slate-600 font-semibold text-center leading-5">
+            <span className="font-bold text-slate-900">Note:</span> Your video, transcript, and audio will be accessed by authorized personnel only. This processing complies with the <span className="text-[#056BFC] font-bold">DPDP Act</span>; you retain the right to request full data erasure once the hiring review is complete.
           </div>
 
           {isMultiScreenDetected && (
@@ -1672,8 +1673,11 @@ export function InterviewView() {
           <Button
             className="mt-6 h-11 w-full rounded-lg bg-[#056BFC] text-base font-bold hover:bg-[#024099]"
             disabled={!allConsentsAccepted || isMultiScreenDetected}
-            onClick={() => {
+            onClick={async () => {
               lastSpokenQuestionIdRef.current = null;
+              if (interviewId) {
+                await recordCandidateConsentAction(interviewId);
+              }
               const docEl = document.documentElement;
               if (docEl.requestFullscreen) {
                 docEl.requestFullscreen().catch((err) => {

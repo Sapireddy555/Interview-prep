@@ -13,6 +13,7 @@ import { analyzeFrameWithAzure } from "@/lib/azure-vision-proctor";
 import { z } from "zod";
 import crypto from "crypto";
 import { db } from "@/lib/db";
+import { encryptField, decryptField } from "@/lib/crypto";
 import { getInterviewQuestionSetForRole, getQuestionListForRole, getTechnicalQuestionPool } from "@/lib/interview-constants";
 import type { InterviewQuestion } from "@/lib/interview-constants";
 import {
@@ -102,6 +103,22 @@ export async function createInterviewSession(
     }
 }
 
+export async function recordCandidateConsentAction(sessionId: string) {
+    console.log('Recording candidate consent for session:', sessionId);
+    try {
+        await db.query(
+            `UPDATE sessions 
+             SET consent_granted = TRUE, consent_granted_at = CURRENT_TIMESTAMP 
+             WHERE id = $1`,
+            [sessionId]
+        );
+        return { success: true };
+    } catch (error) {
+        console.error("Error recording candidate consent:", error);
+        return { success: false, error: String(error) };
+    }
+}
+
 export async function saveInterviewSession(id: string, session: Omit<InterviewSession, 'id' | 'date' | 'role' | 'summaryReport'>) {
     console.log('Saving interview session:', id);
     try {
@@ -161,7 +178,15 @@ export async function fetchInterviewSession(id: string) {
 
 export async function getCandidate(id: string) {
     const res = await db.query("SELECT * FROM candidates WHERE id = $1", [id]);
-    return res.rows[0] || null;
+    const row = res.rows[0];
+    if (!row) return null;
+    return {
+        ...row,
+        name: decryptField(row.name),
+        email: decryptField(row.email),
+        resume_text: decryptField(row.resume_text),
+        job_description_text: decryptField(row.job_description_text),
+    };
 }
 
 async function getCandidateInterviewAttemptCount(candidateId: string) {
@@ -392,16 +417,16 @@ export async function registerCandidateAction(formData: FormData) {
              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
             [
                 uniqueId,
-                name,
-                email,
+                encryptField(name),
+                encryptField(email),
                 role,
                 difficulty,
                 resumeUpload.url,
                 resume.name,
                 jdUpload.url,
                 jobDescription.name,
-                resumeText,
-                jobDescriptionText,
+                encryptField(resumeText),
+                encryptField(jobDescriptionText),
                 questionBank,
                 l2PanelName,
                 l2PanelEmail,
@@ -475,16 +500,16 @@ export async function registerBulkJobDescriptionTestAction(formData: FormData) {
                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
                 [
                     uniqueId,
-                    candidateName,
-                    email,
+                    encryptField(candidateName),
+                    encryptField(email),
                     testName,
                     difficulty,
                     null,
                     null,
                     jdUpload.url,
                     jobDescription.name,
-                    "",
-                    jobDescriptionText,
+                    encryptField(""),
+                    encryptField(jobDescriptionText),
                     questionBank,
                 ]
             );
@@ -636,14 +661,16 @@ export async function generateQuestionBankWithAI(
   resumeText: string,
   jobDescriptionText: string
 ): Promise<string> {
+  const sanitizedResume = sanitizeDocumentText(resumeText);
+  const sanitizedJd = sanitizeDocumentText(jobDescriptionText);
   const promptText = `You are a Senior Principal Interviewer generating structured, role-specific interview questions.
 Generate exactly 5 technical questions and exactly 3 project-based questions for a candidate interviewing for the role of ${role} (${difficulty} level).
 
 CANDIDATE RESUME TEXT:
-${resumeText || "No resume provided."}
+${sanitizedResume || "No resume provided."}
 
 JOB DESCRIPTION TEXT:
-${jobDescriptionText || "No job description provided."}
+${sanitizedJd || "No job description provided."}
 
 INSTRUCTIONS:
 1. Generate exactly 5 technical questions. Prefix each question with "[technical]". These must cover core skills needed for the role and the job description.
@@ -730,7 +757,7 @@ export async function runInterviewReportGeneration(interviewId: string) {
       throw new Error("Interview session not found.");
     }
 
-    const transcript = normalizeTranscriptForAnalysis(session.transcript);
+    const transcript = sanitizeTranscriptForAI(normalizeTranscriptForAnalysis(session.transcript));
     if (!transcript.length) {
       throw new Error("Interview transcript is empty. Cannot generate a report.");
     }
@@ -841,7 +868,8 @@ function normalizeSessionRow(row: any): InterviewSession {
     l2ScheduledTime: row.l2_scheduled_time ? (typeof row.l2_scheduled_time === 'string' ? row.l2_scheduled_time : row.l2_scheduled_time.toISOString()) : null,
     l2PanelName: row.l2_panel_name ?? null,
     l2PanelEmail: row.l2_panel_email ?? null,
-    candidateName: row.candidate_name ?? null,
+    candidateName: row.candidate_name ? decryptField(row.candidate_name) : null,
+    candidateId: row.candidate_id ?? null,
   };
 }
 
@@ -1906,9 +1934,9 @@ export async function fetchPanelCandidates(panelEmail: string) {
                 l2Scorecard: row.l2_scorecard || {},
                 l2ScheduledTime: row.l2_scheduled_time ? (typeof row.l2_scheduled_time === 'string' ? row.l2_scheduled_time : row.l2_scheduled_time.toISOString()) : null,
                 candidateId: row.candidate_id,
-                candidateName: row.candidate_name,
-                candidateEmail: row.candidate_email,
-                resumeText: row.resume_text,
+                candidateName: row.candidate_name ? decryptField(row.candidate_name) : null,
+                candidateEmail: row.candidate_email ? decryptField(row.candidate_email) : null,
+                resumeText: row.resume_text ? decryptField(row.resume_text) : null,
                 l2PanelName: row.l2_panel_name,
                 l2PanelEmail: row.l2_panel_email
             }))
@@ -1958,7 +1986,10 @@ export async function generatePanelL2QuestionsAction(candidateId: string) {
         const candidate = res.rows[0];
         if (!candidate) return { success: false, error: "Candidate not found." };
 
-        const resume = compactDocumentText(candidate.resume_text || "");
+        const decryptedName = decryptField(candidate.name);
+        const decryptedResume = decryptField(candidate.resume_text || "");
+        const resume = sanitizeDocumentText(decryptedResume);
+        
         if (!resume) {
             return {
                 success: true,
@@ -1973,7 +2004,7 @@ export async function generatePanelL2QuestionsAction(candidateId: string) {
         const promptText = `You are a Senior Principal Interviewer conducting an L2 Technical Assessment for the role of ${candidate.role || "Software Engineer"}.
 Based on the candidate's resume text below, extract their primary projects and generate exactly 3 deep-dive, project-specific technical questions that an L2 panel member should ask to evaluate their engineering depth, architectural decisions, and trade-offs.
 
-CANDIDATE NAME: ${candidate.name}
+CANDIDATE NAME: ${decryptedName}
 CANDIDATE RESUME TEXT:
 ${resume}
 
@@ -2043,6 +2074,72 @@ Return JSON in this shape: { "questions": ["Question 1...", "Question 2...", "Qu
         console.error("Error generating panel L2 questions:", error);
         return { success: false, error: String(error) };
     }
+}
+
+/**
+ * Sanitizes unstructured text fields (resumes, job descriptions) to strip prompt injections
+ * and restrict length to prevent token-exhaustion DoS attacks.
+ */
+function sanitizeDocumentText(text: string | null | undefined): string {
+  if (!text) return "";
+  let sanitized = text;
+  
+  const injectionPatterns = [
+    /ignore\s+(any|all|previous)?\s*instructions/gi,
+    /system\s*override/gi,
+    /you\s+must\s+now/gi,
+    /output\s+only/gi,
+    /override\s+score/gi,
+  ];
+
+  for (const pattern of injectionPatterns) {
+    sanitized = sanitized.replace(pattern, "[redacted]");
+  }
+
+  // Enforce an 8000 character limit to prevent prompt blowup
+  const MAX_LIMIT = 8000;
+  if (sanitized.length > MAX_LIMIT) {
+    sanitized = sanitized.substring(0, MAX_LIMIT) + "... [truncated for length]";
+  }
+  return sanitized;
+}
+
+/**
+ * Sanitizes candidate verbal transcript responses to prevent prompt injection and exploit payloads
+ * before passing the conversation to the final AI evaluation flow.
+ */
+function sanitizeTranscriptForAI(
+  transcript: { role: "user" | "ai"; content: string }[]
+): { role: "user" | "ai"; content: string }[] {
+  return (transcript || []).map((turn) => {
+    if (turn.role !== "user") return turn;
+
+    let content = turn.content || "";
+    const injectionPatterns = [
+      /ignore\s+(any|all|previous)?\s*instructions/gi,
+      /system\s*override/gi,
+      /you\s+must\s+now/gi,
+      /instead\s+of\s+evaluating/gi,
+      /ignore\s+rubric/gi,
+      /set\s+score\s+to/gi,
+      /override\s+score/gi,
+    ];
+
+    for (const pattern of injectionPatterns) {
+      content = content.replace(pattern, "[injection attempt redacted]");
+    }
+
+    // Limit candidate turns to 2000 characters to prevent buffer bloat
+    const MAX_CHAR_LIMIT = 2000;
+    if (content.length > MAX_CHAR_LIMIT) {
+      content = content.substring(0, MAX_CHAR_LIMIT) + "... [truncated]";
+    }
+
+    return {
+      ...turn,
+      content,
+    };
+  });
 }
 
 

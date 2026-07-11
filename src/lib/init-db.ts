@@ -38,7 +38,12 @@ const schema = `
     identity_status TEXT,
     identity_score NUMERIC,
     identity_verified_at TIMESTAMPTZ,
-    identity_error TEXT
+    identity_error TEXT,
+    teams_meeting_url TEXT,
+    consent_granted BOOLEAN DEFAULT FALSE,
+    consent_granted_at TIMESTAMPTZ,
+    l2_recommendation TEXT,
+    l2_score INT DEFAULT 0
   );
 
   -- New table to store violation events/screenshots separately for auditing and retention
@@ -101,14 +106,10 @@ const seedData = [
 ];
 
 export async function initializeDatabase() {
-  console.log('Seeding database (assumes migrations have already been applied)...');
+  console.log('Initializing database schema (creating candidates & sessions)...');
   try {
-    const check = await db.query("SELECT to_regclass('public.candidates') as candidates_exists");
-    const exists = check.rows[0]?.candidates_exists;
-    if (!exists) {
-      console.error('Required tables not found. Run migrations (npm run migrate:up) before seeding.');
-      return { success: false, error: 'Tables not found. Run migrations.' };
-    }
+    await db.query(schema);
+    console.log('Base tables created or verified successfully.');
 
     for (const cand of seedData) {
       await db.query(

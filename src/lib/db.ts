@@ -1,4 +1,6 @@
 import { Pool } from 'pg';
+import fs from 'fs';
+import path from 'path';
 
 const connectionString = process.env.DATABASE_URL;
 
@@ -6,9 +8,27 @@ if (!connectionString) {
   throw new Error("Missing DATABASE_URL. Set it in your environment (e.g. .env.local) before starting the app.");
 }
 
+// Support strict SSL verification when a CA certificate path is provided
+const sslConfig = () => {
+  const caPath = process.env.DB_SSL_CA;
+  if (caPath) {
+    try {
+      const caCert = fs.readFileSync(path.resolve(process.cwd(), caPath)).toString();
+      return {
+        rejectUnauthorized: true,
+        ca: caCert,
+      };
+    } catch (err) {
+      console.error(`Failed to read SSL CA certificate from path ${caPath}:`, err);
+    }
+  }
+  // Default fallback for development/local database environments
+  return { rejectUnauthorized: false };
+};
+
 const pool = new Pool({
   connectionString,
-  ssl: { rejectUnauthorized: false },
+  ssl: sslConfig(),
   max: 20,
   idleTimeoutMillis: 30000,
   // increase connection timeout to allow slower network handshakes
