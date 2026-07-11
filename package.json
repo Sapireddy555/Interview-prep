@@ -7,11 +7,11 @@
     "genkit:dev": "genkit start -- tsx src/ai/dev.ts",
     "genkit:watch": "genkit start -- tsx --watch src/ai/dev.ts",
     "build": "next build",
-    "start": "npm run migrate:up && next start",
+    "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "migrate:up": "node-pg-migrate up -m migrations",
-    "migrate:down": "node-pg-migrate down -m migrations"
+    "migrate:up": "npx node-pg-migrate up -m migrations",
+    "migrate:down": "npx node-pg-migrate down -m migrations"
   },
   "dependencies": {
     "@azure-rest/ai-vision-image-analysis": "^1.0.0-beta.3",
@@ -56,9 +56,9 @@
     "lucide-react": "^0.475.0",
     "microsoft-cognitiveservices-speech-sdk": "^1.49.0",
     "next": "15.3.8",
-    "node-pg-migrate": "^6.2.2",
     "patch-package": "^8.0.0",
     "pg": "^8.20.0",
+    "node-pg-migrate": "^6.2.2",
     "react": "^18.3.1",
     "react-day-picker": "^8.10.1",
     "react-dom": "^18.3.1",
