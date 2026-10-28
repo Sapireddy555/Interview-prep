@@ -39,6 +39,10 @@ Once your App Service is created, configure the following environment variables.
 
 ## 3. How to Deploy the Code
 
+The application must be built before it starts in Azure. The production server defaults to production mode, so deploy the generated `.next` directory with the app, or enable build automation for source deployments (`SCM_DO_BUILD_DURING_DEPLOYMENT=true`). Confirm the deployment logs show `npm run build` completed successfully before `npm start` runs. A missing build can cause startup errors mentioning `.next/trace`. When packaging a GitHub Actions artifact, explicitly include `.next/**`; it is a hidden directory and may be omitted by artifact upload defaults. Keep the artifact file list explicit when enabling hidden files so local `.env` files are not deployed.
+
+No custom startup command is required when the App Service detects the Node.js app: `npm start` runs `node server.js`. Set the App Service application setting `NODE_ENV` to `production` for clarity. Set it to `development` only for local development.
+
 ### Option A: Deployment via VS Code (Recommended for testing)
 1. Install the **Azure Resources** and **Azure App Service** extensions in VS Code.
 2. Log in to your Azure Account.
