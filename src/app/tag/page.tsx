@@ -62,6 +62,8 @@ export default function RecruiterPortal() {
     email: "",
     role: "Generative AI Engineer",
     difficulty: "medium",
+    level: "",
+    tsc: "",
     l2PanelName: "",
     l2PanelEmail: "",
   });
@@ -84,6 +86,8 @@ export default function RecruiterPortal() {
       email: "",
       role: "Generative AI Engineer",
       difficulty: "medium",
+      level: "",
+      tsc: "",
       l2PanelName: "",
       l2PanelEmail: "",
     });
@@ -110,6 +114,8 @@ export default function RecruiterPortal() {
       payload.append("email", singleFormData.email);
       payload.append("role", singleFormData.role);
       payload.append("difficulty", singleFormData.difficulty);
+      payload.append("level", singleFormData.level);
+      payload.append("tsc", singleFormData.tsc);
       payload.append("l2PanelName", singleFormData.l2PanelName);
       payload.append("l2PanelEmail", singleFormData.l2PanelEmail);
       if (singleResumeFile) payload.append("resume", singleResumeFile);
@@ -535,6 +541,38 @@ export default function RecruiterPortal() {
                         <SelectItem value="React Engineer">React Engineer</SelectItem>
                         <SelectItem value="Java Engineer">Java Engineer</SelectItem>
                         <SelectItem value=".NET Developer">.NET Developer</SelectItem>
+                        <SelectItem value="QA Engineer">QA Engineer</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="candidateLevel" className="text-xs font-bold text-slate-500">Candidate Level</Label>
+                    <Select value={singleFormData.level} onValueChange={(v) => setSingleFormData({ ...singleFormData, level: v })}>
+                      <SelectTrigger id="candidateLevel" className={selectTriggerClass}>
+                        <SelectValue placeholder="Select candidate level" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="SE">SE</SelectItem>
+                        <SelectItem value="SSE">SSE</SelectItem>
+                        <SelectItem value="Tech Lead">Tech Lead</SelectItem>
+                        <SelectItem value="Project Manager">Project Manager</SelectItem>
+                        <SelectItem value="Architect">Architect</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="candidateTsc" className="text-xs font-bold text-slate-500">TSC</Label>
+                    <Select value={singleFormData.tsc} onValueChange={(v) => setSingleFormData({ ...singleFormData, tsc: v })}>
+                      <SelectTrigger id="candidateTsc" className={selectTriggerClass}>
+                        <SelectValue placeholder="Select TSC" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Platform,App & Infra TSC">Platform,App &amp; Infra TSC</SelectItem>
+                        <SelectItem value="Software & AI Assurance">Software &amp; AI Assurance</SelectItem>
+                        <SelectItem value="Core">Core</SelectItem>
+                        <SelectItem value="Emerging Tech">Emerging Tech</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

@@ -18,6 +18,8 @@ const schema = `
     selfie_url TEXT,
     selfie_blob_name TEXT,
     selfie_captured_at TIMESTAMPTZ,
+    level TEXT,
+    tsc TEXT,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -75,6 +77,8 @@ const schema = `
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS selfie_url TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS selfie_blob_name TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS selfie_captured_at TIMESTAMPTZ;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS level TEXT;
+  ALTER TABLE candidates ADD COLUMN IF NOT EXISTS tsc TEXT;
   ALTER TABLE candidates ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
 `;
 

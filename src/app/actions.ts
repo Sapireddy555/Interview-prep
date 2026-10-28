@@ -381,6 +381,8 @@ export async function registerCandidateAction(formData: FormData) {
     const email = String(formData.get("email") || "").trim();
     const role = String(formData.get("role") || "Generative AI Engineer").trim();
     const difficulty = String(formData.get("difficulty") || "medium").trim();
+    const level = String(formData.get("level") || "").trim();
+    const tsc = String(formData.get("tsc") || "").trim();
     const l2PanelName = String(formData.get("l2PanelName") || "").trim();
     const l2PanelEmail = String(formData.get("l2PanelEmail") || "").trim();
     const resume = formData.get("resume");
@@ -388,6 +390,14 @@ export async function registerCandidateAction(formData: FormData) {
 
     if (!name || !email || !role || !difficulty) {
         return { success: false, error: "Name, email, role, and difficulty are required." };
+    }
+
+    if (!["SE", "SSE", "Tech Lead", "Project Manager", "Architect"].includes(level)) {
+        return { success: false, error: "Select a valid candidate level." };
+    }
+
+    if (!["Platform,App & Infra TSC", "Software & AI Assurance", "Core", "Emerging Tech"].includes(tsc)) {
+        return { success: false, error: "Select a valid TSC." };
     }
 
     if (!(resume instanceof File) || resume.size === 0 || resume.type !== "application/pdf") {
@@ -413,8 +423,8 @@ export async function registerCandidateAction(formData: FormData) {
             `INSERT INTO candidates (
                 id, name, email, role, difficulty, resume_url, resume_file_name,
                 job_description_url, job_description_file_name, resume_text, job_description_text, question_bank,
-                l2_panel_name, l2_panel_email
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+                l2_panel_name, l2_panel_email, level, tsc
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
             [
                 uniqueId,
                 encryptField(name),
@@ -430,6 +440,8 @@ export async function registerCandidateAction(formData: FormData) {
                 questionBank,
                 l2PanelName,
                 l2PanelEmail,
+                level,
+                tsc,
             ]
         );
         
@@ -1844,7 +1856,8 @@ export async function uploadViolationScreenshot(formData: FormData) {
   const sasUrl = process.env.AZURE_STORAGE_SAS_URL;
   const connectionString = process.env.AZURE_STORAGE_CONNECTION_STRING;
   const ownerFolder = getArtifactOwnerFolder(candidateIdFromForm || await getCandidateIdForInterview(interviewId) || interviewId);
-  const blobName = `${ownerFolder}/${interviewId}/violations/violation_${timestamp}.png`;
+  const imageExtension = imageFile.type === "image/jpeg" ? "jpg" : "png";
+  const blobName = `${ownerFolder}/${interviewId}/violations/violation_${timestamp}.${imageExtension}`;
 
   if (!sasUrl && !connectionString) {
     console.log(`[Mock Azure Violation Upload] Received violation for ${interviewId} at ${timestamp}, size: ${imageFile.size}`);
@@ -2141,5 +2154,3 @@ function sanitizeTranscriptForAI(
     };
   });
 }
-
-

@@ -63,6 +63,7 @@ export function InterviewView() {
   const [isCompleted, setIsCompleted] = useState(false);
   const [hasAcceptedConsent, setHasAcceptedConsent] = useState(false);
   const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraRetryKey, setCameraRetryKey] = useState(0);
   const [identityStatus, setIdentityStatus] = useState<"not_required" | "pending" | "verifying" | "matched" | "failed">("pending");
   const [identityMessage, setIdentityMessage] = useState("");
   const [showIdentityMatchedPopup, setShowIdentityMatchedPopup] = useState(false);
@@ -102,6 +103,7 @@ export function InterviewView() {
   const displaySuspicionScoreRef = useRef(0);
   const [displaySuspicionScore, setDisplaySuspicionScore] = useState(0);
   const isMountedRef = useRef(true);
+  const proctoringInFlightRef = useRef(false);
   const proctorVideoRef = useRef<HTMLVideoElement | null>(null);
   const runProctoringRef = useRef<() => Promise<void>>(async () => {});
   const addSecurityEventRef = useRef<(type: SecurityEvent["type"], details?: string) => void>(() => {});
@@ -406,38 +408,32 @@ export function InterviewView() {
           ? "Transcript captured"
           : "Ready for your response";
 
-  const captureViolationEvidence = useCallback((video: HTMLVideoElement, timestamp: string) => {
-    try {
-      const hiCanvas = document.createElement("canvas");
-      const maxW = Math.min(1280, video.videoWidth || 1280);
-      const maxH = Math.min(720, video.videoHeight || 720);
-      hiCanvas.width = maxW;
-      hiCanvas.height = maxH;
-      const hiCtx = hiCanvas.getContext("2d");
-      if (!hiCtx) return;
-
-      hiCtx.drawImage(video, 0, 0, maxW, maxH);
-      hiCanvas.toBlob(async (blob) => {
-        if (blob && interviewId) {
-          try {
-            const formData = new FormData();
-            formData.append("interviewId", interviewId);
-            if (candidateId) formData.append("candidateId", candidateId);
-            formData.append("timestamp", timestamp);
-            formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.png`, { type: blob.type || "image/png" }));
-            await uploadViolationScreenshot(formData);
-          } catch (e) {
-            console.error("Error uploading violation screenshot:", e);
-          }
-        }
-      }, "image/png", 0.9);
-    } catch (e) {
-      console.error("Error capturing/uploading hi-res screenshot:", e);
+  const captureViolationEvidence = useCallback((timestamp: string) => {
+    const stream = cameraStreamRef.current;
+    if (!interviewId || !stream?.getVideoTracks().some((track) => track.readyState === "live" && track.enabled)) {
+      console.warn("Skipping violation screenshot because the live camera track is unavailable.");
+      return;
     }
-  }, [candidateId, interviewId]);
+
+    void captureFrameFromStream(stream)
+      .then(async (frame) => {
+        const blob = await fetch(frame).then((response) => response.blob());
+        const formData = new FormData();
+        formData.append("interviewId", interviewId);
+        if (candidateId) formData.append("candidateId", candidateId);
+        formData.append("timestamp", timestamp);
+        formData.append("image", new File([blob], `violation_${interviewId}_${Date.now()}.jpg`, {
+          type: blob.type || "image/jpeg",
+        }));
+        const result = await uploadViolationScreenshot(formData);
+        if (!result.success) throw new Error(result.error || "Screenshot upload failed.");
+      })
+      .catch((error) => {
+        console.error("Error capturing/uploading violation screenshot:", error);
+      });
+  }, [candidateId, captureFrameFromStream, interviewId]);
 
   const recordProctorViolation = useCallback((
-    video: HTMLVideoElement,
     violationType: "looking_away" | "phone_detected" | "typing" | "none" | string,
     warningMessage: string,
     source: "mediapipe" | "azure"
@@ -455,7 +451,7 @@ export function InterviewView() {
 
     addSecurityEvent(eventType, source);
     applySuspicionDelta(PROCTOR_SUSPICION_WEIGHTS[violationType] || 10);
-    captureViolationEvidence(video, timestamp);
+    captureViolationEvidence(timestamp);
   }, [addSecurityEvent, applySuspicionDelta, captureViolationEvidence, getRelativeTimestamp]);
 
   const getMediaPipeFaceLandmarker = useCallback(async () => {
@@ -561,7 +557,7 @@ export function InterviewView() {
 
   const runMediaPipeProctoring = useCallback(async () => {
     if (!isMountedRef.current || mediaPipeDisabledRef.current) return false;
-    const v = proctorVideoRef.current || videoRef.current;
+    const v = videoRef.current || proctorVideoRef.current;
     if (!v || v.readyState < 3 || !v.videoWidth || !v.videoHeight) return false;
 
     const faceLandmarker = await getMediaPipeFaceLandmarker();
@@ -592,7 +588,7 @@ export function InterviewView() {
 
       lastProctorViolationAtRef.current[`mediapipe:${violationKey}`] = Date.now();
       mediaPipeStrikeRef.current[violationKey] = 0;
-      recordProctorViolation(v, analysis.violationType, analysis.warningMessage, "mediapipe");
+      recordProctorViolation(analysis.violationType, analysis.warningMessage, "mediapipe");
       return true;
     } catch (error) {
       console.warn("MediaPipe proctoring check failed; continuing with Azure Vision fallback.", error);
@@ -601,23 +597,24 @@ export function InterviewView() {
   }, [analyzeMediaPipeFaceResult, getMediaPipeFaceLandmarker, recordProctorViolation]);
 
   const runProctoring = useCallback(async () => {
-    if (!isMountedRef.current) return;
-    const v = proctorVideoRef.current || videoRef.current;
-    const mediaPipeHandledFrame = await runMediaPipeProctoring();
-    if (mediaPipeHandledFrame) {
-      azureObjectScanTickRef.current += 1;
-      if (azureObjectScanTickRef.current % 4 !== 0) return;
-    }
+    if (!isMountedRef.current || proctoringInFlightRef.current) return;
+    proctoringInFlightRef.current = true;
+    try {
+      const v = videoRef.current || proctorVideoRef.current;
+      const mediaPipeHandledFrame = await runMediaPipeProctoring();
+      if (mediaPipeHandledFrame) {
+        azureObjectScanTickRef.current += 1;
+        if (azureObjectScanTickRef.current % 4 !== 0) return;
+      }
 
-    if (v && v.readyState >= 3) {
-      const canvas = document.createElement("canvas");
-      canvas.width = v.videoWidth;
-      canvas.height = v.videoHeight;
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
-        const dataUri = canvas.toDataURL("image/jpeg");
-        try {
+      if (v && v.readyState >= 3) {
+        const canvas = document.createElement("canvas");
+        canvas.width = v.videoWidth;
+        canvas.height = v.videoHeight;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+          const dataUri = canvas.toDataURL("image/jpeg");
           const res = await checkProctoring({ videoFrameDataUri: dataUri });
           if (!res.success || !res.data?.hasViolation) {
             proctorStrikeRef.current = {};
@@ -642,11 +639,13 @@ export function InterviewView() {
           lastProctorViolationAtRef.current[violationKey] = Date.now();
           proctorStrikeRef.current[violationKey] = 0;
 
-          recordProctorViolation(v, res.data.violationType, res.data.warningMessage, "azure");
-        } catch (err) {
-          console.error('Error in proctoring check:', err);
+          recordProctorViolation(res.data.violationType, res.data.warningMessage, "azure");
         }
       }
+    } catch (err) {
+      console.error("Error in proctoring check:", err);
+    } finally {
+      proctoringInFlightRef.current = false;
     }
   }, [recordProctorViolation, runMediaPipeProctoring]);
 
@@ -655,7 +654,15 @@ export function InterviewView() {
   }, [runProctoring]);
 
   const startFullInterviewRecording = useCallback((stream: MediaStream, id: string) => {
-    if (fullInterviewRecorderRef.current?.state === "recording") return;
+    const activeRecorder = fullInterviewRecorderRef.current;
+    if (activeRecorder?.state === "recording") {
+      if (activeRecorder.stream === stream) return;
+      activeRecorder.addEventListener("stop", () => {
+        if (isMountedRef.current) startFullInterviewRecordingRef.current(stream, id);
+      }, { once: true });
+      activeRecorder.stop();
+      return;
+    }
 
     try {
       let recorder: MediaRecorder;
@@ -665,9 +672,6 @@ export function InterviewView() {
         recorder = new MediaRecorder(stream);
       }
 
-      fullRecordingChunkIndexRef.current = 0;
-      recordingUploadChainRef.current = Promise.resolve();
-      recordingUploadErrorRef.current = null;
       fullInterviewRecorderRef.current = recorder;
 
       recorder.ondataavailable = (event) => {
@@ -850,10 +854,26 @@ export function InterviewView() {
     const getCameraPermission = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+        if (!isMountedRef.current) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         setHasCameraPermission(true);
         cameraStreamRef.current = stream;
         setCameraStream(stream);
         attachCameraStream(stream);
+
+        stream.getVideoTracks().forEach((track) => {
+          track.addEventListener("ended", () => {
+            if (!isMountedRef.current) return;
+            setHasCameraPermission(false);
+            toast({
+              variant: "destructive",
+              title: "Camera connection lost",
+              description: "Your interview is still open. Reconnect your camera to resume video and proctoring.",
+            });
+          }, { once: true });
+        });
 
         if (id) {
             startFullInterviewRecordingRef.current(stream, id);
@@ -900,7 +920,7 @@ export function InterviewView() {
             addSecurityEventRef.current("multi_monitor_suspected", `screen:${window.screen.width},window:${window.outerWidth}`);
           }
 
-          const video = proctorVideoRef.current || videoRef.current;
+          const video = videoRef.current || proctorVideoRef.current;
           if (video && video.videoWidth > 0 && video.videoHeight > 0) {
             const aspect = video.videoWidth / video.videoHeight;
             if (aspect > 2.3 || aspect < 1.15) {
@@ -980,7 +1000,7 @@ export function InterviewView() {
         cameraStreamRef.current?.getTracks().forEach((track) => track.stop());
         cameraStreamRef.current = null;
     }
-  }, [attachCameraStream, searchParams, toast]);
+  }, [attachCameraStream, cameraRetryKey, searchParams, toast]);
 
   useEffect(() => {
     if (!hasAcceptedConsent || !cameraStream) return;
@@ -1832,7 +1852,15 @@ export function InterviewView() {
                     <div className="rounded-lg border border-red-200 bg-white px-6 py-5 text-center shadow-sm">
                       <VolumeX className="mx-auto mb-3 h-8 w-8 text-red-500" />
                       <p className="text-sm font-semibold text-slate-900">Camera unavailable</p>
-                      <p className="mt-1 text-xs text-slate-500">Enable permissions to continue proctoring.</p>
+                      <p className="mt-1 text-xs text-slate-500">Reconnect your camera to resume video and proctoring.</p>
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-3"
+                        onClick={() => setCameraRetryKey((current) => current + 1)}
+                      >
+                        Reconnect camera
+                      </Button>
                     </div>
                   </div>
                 )}
