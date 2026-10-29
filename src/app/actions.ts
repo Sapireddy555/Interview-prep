@@ -15,6 +15,7 @@ import crypto from "crypto";
 import { db } from "@/lib/db";
 import { encryptField, decryptField } from "@/lib/crypto";
 import { getInterviewQuestionSetForRole, getQuestionListForRole, getTechnicalQuestionPool } from "@/lib/interview-constants";
+import { CANDIDATE_LEVEL_DIFFICULTY, isCandidateLevel } from "@/lib/candidate-levels";
 import type { InterviewQuestion } from "@/lib/interview-constants";
 import {
   buildResumeProjectQuestionPrompts,
@@ -380,7 +381,6 @@ export async function registerCandidateAction(formData: FormData) {
     const name = String(formData.get("name") || "").trim();
     const email = String(formData.get("email") || "").trim();
     const role = String(formData.get("role") || "Generative AI Engineer").trim();
-    const difficulty = String(formData.get("difficulty") || "medium").trim();
     const level = String(formData.get("level") || "").trim();
     const tsc = String(formData.get("tsc") || "").trim();
     const l2PanelName = String(formData.get("l2PanelName") || "").trim();
@@ -388,13 +388,15 @@ export async function registerCandidateAction(formData: FormData) {
     const resume = formData.get("resume");
     const jobDescription = formData.get("jobDescription");
 
-    if (!name || !email || !role || !difficulty) {
-        return { success: false, error: "Name, email, role, and difficulty are required." };
+    if (!name || !email || !role) {
+        return { success: false, error: "Name, email, and role are required." };
     }
 
-    if (!["SE", "SSE", "Tech Lead", "Project Manager", "Architect"].includes(level)) {
+    if (!isCandidateLevel(level)) {
         return { success: false, error: "Select a valid candidate level." };
     }
+
+    const difficulty = CANDIDATE_LEVEL_DIFFICULTY[level];
 
     if (!["Platform,App & Infra TSC", "Software & AI Assurance", "Core", "Emerging Tech"].includes(tsc)) {
         return { success: false, error: "Select a valid TSC." };

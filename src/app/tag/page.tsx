@@ -8,6 +8,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { registerBulkJobDescriptionTestAction, registerCandidateAction } from "@/app/actions";
+import {
+  CANDIDATE_LEVEL_DIFFICULTY,
+  CANDIDATE_LEVELS,
+  INTERVIEW_DIFFICULTY_LABELS,
+  isCandidateLevel,
+} from "@/lib/candidate-levels";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, CheckCircle, Copy, FileText, Loader2, Mail, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
@@ -61,7 +67,6 @@ export default function RecruiterPortal() {
     name: "",
     email: "",
     role: "Generative AI Engineer",
-    difficulty: "medium",
     level: "",
     tsc: "",
     l2PanelName: "",
@@ -85,7 +90,6 @@ export default function RecruiterPortal() {
       name: "",
       email: "",
       role: "Generative AI Engineer",
-      difficulty: "medium",
       level: "",
       tsc: "",
       l2PanelName: "",
@@ -113,7 +117,6 @@ export default function RecruiterPortal() {
       payload.append("name", singleFormData.name);
       payload.append("email", singleFormData.email);
       payload.append("role", singleFormData.role);
-      payload.append("difficulty", singleFormData.difficulty);
       payload.append("level", singleFormData.level);
       payload.append("tsc", singleFormData.tsc);
       payload.append("l2PanelName", singleFormData.l2PanelName);
@@ -553,13 +556,16 @@ export default function RecruiterPortal() {
                         <SelectValue placeholder="Select candidate level" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="SE">SE</SelectItem>
-                        <SelectItem value="SSE">SSE</SelectItem>
-                        <SelectItem value="Tech Lead">Tech Lead</SelectItem>
-                        <SelectItem value="Project Manager">Project Manager</SelectItem>
-                        <SelectItem value="Architect">Architect</SelectItem>
+                        {CANDIDATE_LEVELS.map((level) => (
+                          <SelectItem key={level} value={level}>{level}</SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
+                    {isCandidateLevel(singleFormData.level) && (
+                      <p className="text-xs text-slate-500">
+                        Assessment difficulty: {INTERVIEW_DIFFICULTY_LABELS[CANDIDATE_LEVEL_DIFFICULTY[singleFormData.level]]}
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-2">
@@ -577,19 +583,6 @@ export default function RecruiterPortal() {
                     </Select>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label htmlFor="singleDifficulty" className="text-xs font-bold text-slate-500">Assessment Difficulty</Label>
-                    <Select value={singleFormData.difficulty} onValueChange={(v) => setSingleFormData({ ...singleFormData, difficulty: v })}>
-                      <SelectTrigger id="singleDifficulty" className={selectTriggerClass}>
-                        <SelectValue placeholder="Select difficulty" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="easy">Beginner (0-3 years)</SelectItem>
-                        <SelectItem value="medium">Intermediate (3-6 years)</SelectItem>
-                        <SelectItem value="hard">Expert (6+ years)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
                     </div>
                   </div>
 
